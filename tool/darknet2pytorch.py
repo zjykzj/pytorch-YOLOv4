@@ -126,13 +126,17 @@ class EmptyModule(nn.Module):
 class Darknet(nn.Module):
     def __init__(self, cfgfile, inference=False):
         super(Darknet, self).__init__()
+        # 推理模式还是训练模式
         self.inference = inference
         self.training = not self.inference
 
+        # 通过配置文件生成对应blocks，默认使用`/path/to/cfg/yolov4.cfg`
         self.blocks = parse_cfg(cfgfile)
+        # 获取输入数据的宽和高
         self.width = int(self.blocks[0]['width'])
         self.height = int(self.blocks[0]['height'])
 
+        # 基于blocks参数创建对应模型
         self.models = self.create_network(self.blocks)  # merge conv, bn,leaky
         self.loss = self.models[len(self.models) - 1]
 
@@ -248,23 +252,35 @@ class Darknet(nn.Module):
                 prev_filters = int(block['channels'])
                 continue
             elif block['type'] == 'convolutional':
+                # 第几个卷积层
                 conv_id = conv_id + 1
+                # 是否跟随归一化层
                 batch_normalize = int(block['batch_normalize'])
+                # 滤波器数目
                 filters = int(block['filters'])
+                # 滤波器内核大小
                 kernel_size = int(block['size'])
+                # 滤波器步长
                 stride = int(block['stride'])
+                # 是否进行填充，如果是，表示空间感受野没有变化
                 is_pad = int(block['pad'])
                 pad = (kernel_size - 1) // 2 if is_pad else 0
+                # 激活函数类型
                 activation = block['activation']
+
                 model = nn.Sequential()
                 if batch_normalize:
+                    # 是否跟随BN层
+                    # conv<编号> = nn.Conv2d(...)
                     model.add_module('conv{0}'.format(conv_id),
                                      nn.Conv2d(prev_filters, filters, kernel_size, stride, pad, bias=False))
+                    # bn<编号> = nn.BatchNorm2d(...)
                     model.add_module('bn{0}'.format(conv_id), nn.BatchNorm2d(filters))
                     # model.add_module('bn{0}'.format(conv_id), BN2d(filters))
                 else:
                     model.add_module('conv{0}'.format(conv_id),
                                      nn.Conv2d(prev_filters, filters, kernel_size, stride, pad))
+                # 激活函数
                 if activation == 'leaky':
                     model.add_module('leaky{0}'.format(conv_id), nn.LeakyReLU(0.1, inplace=True))
                 elif activation == 'relu':

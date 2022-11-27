@@ -637,6 +637,7 @@ if __name__ == "__main__":
     # 使用darknet网络配置还是自定义YOLoV4，默认为True
     if cfg.use_darknet_cfg:
         model = Darknet(cfg.cfgfile)
+        model.print_network()
     else:
         model = Yolov4(cfg.pretrained, n_classes=cfg.classes)
 

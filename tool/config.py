@@ -6,30 +6,39 @@ def parse_cfg(cfgfile):
     blocks = []
     fp = open(cfgfile, 'r')
     block = None
+    # 读取第一行
     line = fp.readline()
     while line != '':
         line = line.rstrip()
         if line == '' or line[0] == '#':
+            # 过滤空行或者注释行
             line = fp.readline()
             continue
         elif line[0] == '[':
             if block:
+                # block不为空，加入blocks列表
                 blocks.append(block)
+            # 创建新的block字典
             block = dict()
+            # 获取该block的类型，比如[net]、[convolutional]
             block['type'] = line.lstrip('[').rstrip(']')
             # set default value
             if block['type'] == 'convolutional':
+                # 每个卷积层后面默认跟随一个BN层，=0表示没有BN层，估计是为了方便ConvBN模块的使用
                 block['batch_normalize'] = 0
         else:
+            # 解析键值对
             key, value = line.split('=')
             key = key.strip()
             if key == 'type':
                 key = '_type'
             value = value.strip()
             block[key] = value
+        # 读取下一行
         line = fp.readline()
 
     if block:
+        # 加入最后一个block
         blocks.append(block)
     fp.close()
     return blocks
