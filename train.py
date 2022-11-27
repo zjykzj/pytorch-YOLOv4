@@ -529,26 +529,37 @@ def evaluate(model, data_loader, cfg, device, logger=None, **kwargs):
 
 
 def get_args(**kwargs):
+    """
+    基础配置 + 命令行参数配置 = 最终配置
+    注意：基础配置和命令行参数配置中部分重合
+    """
     cfg = kwargs
     parser = argparse.ArgumentParser(description='Train the Model on images and target masks',
                                      formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     # parser.add_argument('-b', '--batch-size', metavar='B', type=int, nargs='?', default=2,
     #                     help='Batch size', dest='batchsize')
+    # 学习率设置，默认为0.001
     parser.add_argument('-l', '--learning-rate', metavar='LR', type=float, nargs='?', default=0.001,
                         help='Learning rate', dest='learning_rate')
     parser.add_argument('-f', '--load', dest='load', type=str, default=None,
                         help='Load model from a .pth file')
+    # 训练GPU，默认为-1，表示使用cpu
     parser.add_argument('-g', '--gpu', metavar='G', type=str, default='-1',
                         help='GPU', dest='gpu')
+    # 数据根路径，默认为None，使用基础配置
     parser.add_argument('-dir', '--data-dir', type=str, default=None,
                         help='dataset dir', dest='dataset_dir')
+    # 预训练权重，默认为None，不使用
     parser.add_argument('-pretrained', type=str, default=None, help='pretrained yolov4.conv.137')
+    # 类别数，默认使用coco数据集，大小为80
     parser.add_argument('-classes', type=int, default=80, help='dataset classes')
     parser.add_argument('-train_label_path', dest='train_label', type=str, default='train.txt', help="train label path")
+    # 优化器，默认使用adam
     parser.add_argument(
         '-optimizer', type=str, default='adam',
         help='training optimizer',
         dest='TRAIN_OPTIMIZER')
+    # IoU类型，默认使用iou
     parser.add_argument(
         '-iou-type', type=str, default='iou',
         help='iou type (iou, giou, diou, ciou)',
@@ -573,13 +584,17 @@ def init_logger(log_file=None, log_dir=None, log_level=logging.INFO, mode='w', s
     """
 
     def get_date_str():
+        # 年-月-日_时-分-秒
         now = datetime.datetime.now()
         return now.strftime('%Y-%m-%d_%H-%M-%S')
 
+    # 日志格式：时间 文件名[line:行数] 日志级别: 具体内容
     fmt = '%(asctime)s %(filename)s[line:%(lineno)d] %(levelname)s: %(message)s'
     if log_dir is None:
+        # 默认放置在~/temp/log路径下
         log_dir = '~/temp/log/'
     if log_file is None:
+        # 日志文件命名：log_<日期>.txt
         log_file = 'log_' + get_date_str() + '.txt'
     if not os.path.exists(log_dir):
         os.makedirs(log_dir)
@@ -593,6 +608,7 @@ def init_logger(log_file=None, log_dir=None, log_level=logging.INFO, mode='w', s
                         filemode=mode)
 
     if stdout:
+        # 是否同步打印到文件和控制台窗口
         console = logging.StreamHandler(stream=sys.stdout)
         console.setLevel(log_level)
         formatter = logging.Formatter(fmt)
@@ -608,12 +624,17 @@ def _get_date_str():
 
 
 if __name__ == "__main__":
+    # 初始化日志模块
     logging = init_logger(log_dir='log')
+    # Cfg是配置文件，有需要可以手动调整
     cfg = get_args(**Cfg)
+    # 设置有效GPU
     os.environ["CUDA_VISIBLE_DEVICES"] = cfg.gpu
+    # 判断是否使用GPU
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     logging.info(f'Using device {device}')
 
+    # 使用darknet网络配置还是自定义YOLoV4，默认为True
     if cfg.use_darknet_cfg:
         model = Darknet(cfg.cfgfile)
     else:
