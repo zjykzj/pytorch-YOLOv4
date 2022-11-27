@@ -448,7 +448,7 @@ def train(model, device, config, epochs=5, batch_size=1, save_cp=True, log_step=
                     pass
                 save_path = os.path.join(config.checkpoints, f'{save_prefix}{epoch + 1}.pth')
                 if isinstance(model, torch.nn.DataParallel):
-                    torch.save(model.moduel,state_dict(), save_path)
+                    torch.save(model.moduel, state_dict(), save_path)
                 else:
                     torch.save(model.state_dict(), save_path)
                 logging.info(f'Checkpoint {epoch + 1} saved !')
@@ -472,7 +472,7 @@ def evaluate(model, data_loader, cfg, device, logger=None, **kwargs):
     # header = 'Test:'
 
     coco = convert_to_coco_api(data_loader.dataset, bbox_fmt='coco')
-    coco_evaluator = CocoEvaluator(coco, iou_types = ["bbox"], bbox_fmt='coco')
+    coco_evaluator = CocoEvaluator(coco, iou_types=["bbox"], bbox_fmt='coco')
 
     for images, targets in data_loader:
         model_input = [[cv2.resize(img, (cfg.w, cfg.h))] for img in images]
@@ -497,11 +497,11 @@ def evaluate(model, data_loader, cfg, device, logger=None, **kwargs):
             img_height, img_width = img.shape[:2]
             # boxes = output[...,:4].copy()  # output boxes in yolo format
             boxes = boxes.squeeze(2).cpu().detach().numpy()
-            boxes[...,2:] = boxes[...,2:] - boxes[...,:2] # Transform [x1, y1, x2, y2] to [x1, y1, w, h]
-            boxes[...,0] = boxes[...,0]*img_width
-            boxes[...,1] = boxes[...,1]*img_height
-            boxes[...,2] = boxes[...,2]*img_width
-            boxes[...,3] = boxes[...,3]*img_height
+            boxes[..., 2:] = boxes[..., 2:] - boxes[..., :2]  # Transform [x1, y1, x2, y2] to [x1, y1, w, h]
+            boxes[..., 0] = boxes[..., 0] * img_width
+            boxes[..., 1] = boxes[..., 1] * img_height
+            boxes[..., 2] = boxes[..., 2] * img_width
+            boxes[..., 3] = boxes[..., 3] * img_height
             boxes = torch.as_tensor(boxes, dtype=torch.float32)
             # confs = output[...,4:].copy()
             confs = confs.cpu().detach().numpy()
@@ -571,6 +571,7 @@ def init_logger(log_file=None, log_dir=None, log_level=logging.INFO, mode='w', s
     log_dir: 日志文件的文件夹路径
     mode: 'a', append; 'w', 覆盖原文件写入.
     """
+
     def get_date_str():
         now = datetime.datetime.now()
         return now.strftime('%Y-%m-%d_%H-%M-%S')
