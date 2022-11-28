@@ -409,7 +409,7 @@ class Yolo_dataset(Dataset):
         out_bboxes = []
 
         for i in range(use_mixup + 1):
-            print(f"{use_mixup} {i}")
+            # print(f"{use_mixup} {i}")
             if i != 0:
                 # i == 0 使用原图
                 # i != 0 随机选择一张图像，参与拼接

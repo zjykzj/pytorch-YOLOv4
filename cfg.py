@@ -13,7 +13,6 @@
 import os
 from easydict import EasyDict
 
-
 _BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 Cfg = EasyDict()
@@ -56,7 +55,7 @@ Cfg.gaussian = 0
 Cfg.boxes = 60  # box num
 Cfg.TRAIN_EPOCHS = 300
 Cfg.train_label = os.path.join(_BASE_DIR, 'data', 'train.txt')
-Cfg.val_label = os.path.join(_BASE_DIR, 'data' ,'val.txt')
+Cfg.val_label = os.path.join(_BASE_DIR, 'data', 'val.txt')
 Cfg.TRAIN_OPTIMIZER = 'adam'
 '''
 image_path1 x1,y1,x2,y2,id x1,y1,x2,y2,id x1,y1,x2,y2,id ...
