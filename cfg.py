@@ -40,6 +40,7 @@ Cfg.steps = [400000, 450000]
 Cfg.policy = Cfg.steps
 Cfg.scales = .1, .1
 
+# 默认使用mosaic而不是cutmix
 Cfg.cutmix = 0
 Cfg.mosaic = 1
 
