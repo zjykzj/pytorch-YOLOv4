@@ -22,19 +22,31 @@ import torch
 import argparse
 
 """hyper parameters"""
-use_cuda = True
+# use_cuda = True
+use_cuda = False
+
+"""shell
+python demo.py -weightfile assets/darknet/yolov4.weights -imgfile ./data/giraffe.jpg
+python demo.py -weightfile assets/pytorch/yolov4.conv.137.pth -imgfile ./data/giraffe.jpg -torch True
+"""
 
 
 def detect_cv2(cfgfile, weightfile, imgfile):
     import cv2
-    # 创建Darknet模型
-    m = Darknet(cfgfile)
-    # m = Yolov4(cfgfile)
+    if args.torch:
+        m = Yolov4(yolov4conv137weight=weightfile, n_classes=80, inference=True)
+        width = 608
+        height = 608
+    else:
+        # 创建Darknet模型
+        m = Darknet(cfgfile, inference=True)
+        width = m.width
+        height = m.height
 
-    # 打印网络架构
-    m.print_network()
-    # 加载权重文件
-    m.load_weights(weightfile)
+        # 打印网络架构
+        m.print_network()
+        # 加载权重文件
+        m.load_weights(weightfile)
     print('Loading weights from %s... Done!' % (weightfile))
 
     if use_cuda:
@@ -55,7 +67,7 @@ def detect_cv2(cfgfile, weightfile, imgfile):
     # 读取图像
     img = cv2.imread(imgfile)
     # 预处理，包括图像缩放 + 颜色转换
-    sized = cv2.resize(img, (m.width, m.height))
+    sized = cv2.resize(img, (width, height))
     sized = cv2.cvtColor(sized, cv2.COLOR_BGR2RGB)
 
     for i in range(2):
@@ -172,6 +184,7 @@ def get_args():
 
 if __name__ == '__main__':
     args = get_args()
+    print(args)
     # 针对图像还是打开camera
     if args.imgfile:
         detect_cv2(args.cfgfile, args.weightfile, args.imgfile)

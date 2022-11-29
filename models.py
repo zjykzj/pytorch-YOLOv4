@@ -435,6 +435,7 @@ class Yolov4(nn.Module):
         # head
         self.head = Yolov4Head(output_ch, n_classes, inference)
 
+        self.num_classes = n_classes
 
     def forward(self, input):
         d1 = self.down1(input)
