@@ -4,17 +4,23 @@ from tool.darknet2pytorch import Darknet
 
 
 def transform_to_onnx(cfgfile, weightfile, batch_size=1, onnx_file_name=None):
+    # 创建模型
     model = Darknet(cfgfile)
 
+    # 打印网络
     model.print_network()
+    # 加载权重
     model.load_weights(weightfile)
     print('Loading weights from %s... Done!' % (weightfile))
 
+    # 如果batch_size设置为<=0，那么设置ONNX模型为动态输出
     dynamic = False
     if batch_size <= 0:
         dynamic = True
 
+    # 输入名
     input_names = ["input"]
+    # 输出名
     output_names = ['boxes', 'confs']
 
     if dynamic:
@@ -52,13 +58,20 @@ def transform_to_onnx(cfgfile, weightfile, batch_size=1, onnx_file_name=None):
         return onnx_file_name
 
 
-if __name__ == '__main__':
+def parse_args():
     from argparse import ArgumentParser
+
     parser = ArgumentParser()
     parser.add_argument('config')
     parser.add_argument('weightfile')
-    parser.add_argument('--batch_size', type=int, help="Static Batchsize of the model. use batch_size<=0 for dynamic batch size")
+    parser.add_argument('--batch_size', type=int,
+                        help="Static Batchsize of the model. use batch_size<=0 for dynamic batch size")
     parser.add_argument('--onnx_file_path', help="Output onnx file path")
     args = parser.parse_args()
-    transform_to_onnx(args.config, args.weightfile, args.batch_size, args.onnx_file_path)
 
+    return args
+
+
+if __name__ == '__main__':
+    args = parse_args()
+    transform_to_onnx(args.config, args.weightfile, args.batch_size, args.onnx_file_path)
