@@ -1,4 +1,6 @@
 import sys
+import time
+
 import onnx
 import os
 import argparse
@@ -9,10 +11,14 @@ import onnxruntime
 from tool.utils import *
 from tool.darknet2onnx import *
 
+"""shell
+python demo_darknet2onnx.py cfg/yolov4.cfg data/coco.names assets/darknet/yolov4.weights ./data/dog.jpg 1
+"""
+
 
 def main(cfg_file, namesfile, weight_file, image_path, batch_size):
-
     if batch_size <= 0:
+        # 动态加载
         onnx_path_demo = transform_to_onnx(cfg_file, weight_file, batch_size)
     else:
         # Transform to onnx as specified batch size
@@ -26,7 +32,6 @@ def main(cfg_file, namesfile, weight_file, image_path, batch_size):
 
     image_src = cv2.imread(image_path)
     detect(session, image_src, namesfile)
-
 
 
 def detect(session, image_src, namesfile):
@@ -44,7 +49,13 @@ def detect(session, image_src, namesfile):
     # Compute
     input_name = session.get_inputs()[0].name
 
-    outputs = session.run(None, {input_name: img_in})
+    for i in range(2):
+        start = time.time()
+        # 图像检测
+        outputs = session.run(None, {input_name: img_in})
+        finish = time.time()
+        if i == 1:
+            print('Predicted in %f seconds.' % (finish - start))
 
     boxes = post_processing(img_in, 0.4, 0.6, outputs)
 
@@ -52,14 +63,18 @@ def detect(session, image_src, namesfile):
     plot_boxes_cv2(image_src, boxes[0], savename='predictions_onnx.jpg', class_names=class_names)
 
 
-
 if __name__ == '__main__':
     print("Converting to onnx and running demo ...")
     if len(sys.argv) == 6:
+        # darknet模型配置文件
         cfg_file = sys.argv[1]
+        # 数据集类名文件
         namesfile = sys.argv[2]
+        # 预训练权重
         weight_file = sys.argv[3]
+        # 图像路径
         image_path = sys.argv[4]
+        # 批量大小
         batch_size = int(sys.argv[5])
         main(cfg_file, namesfile, weight_file, image_path, batch_size)
     else:

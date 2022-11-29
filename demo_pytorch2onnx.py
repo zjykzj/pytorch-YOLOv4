@@ -13,7 +13,6 @@ from demo_darknet2onnx import detect
 
 
 def transform_to_onnx(weight_file, batch_size, n_classes, IN_IMAGE_H, IN_IMAGE_W):
-    
     model = Yolov4(n_classes=n_classes, inference=True)
 
     pretrained_dict = torch.load(weight_file, map_location=torch.device('cuda'))
@@ -60,11 +59,9 @@ def transform_to_onnx(weight_file, batch_size, n_classes, IN_IMAGE_H, IN_IMAGE_W
 
         print('Onnx model exporting done')
         return onnx_file_name
-    
 
 
 def main(weight_file, image_path, batch_size, n_classes, IN_IMAGE_H, IN_IMAGE_W):
-
     if batch_size <= 0:
         onnx_path_demo = transform_to_onnx(weight_file, batch_size, n_classes, IN_IMAGE_H, IN_IMAGE_W)
     else:
@@ -81,11 +78,10 @@ def main(weight_file, image_path, batch_size, n_classes, IN_IMAGE_H, IN_IMAGE_W)
     detect(session, image_src)
 
 
-
 if __name__ == '__main__':
     print("Converting to onnx and running demo ...")
     if len(sys.argv) == 7:
-        
+
         weight_file = sys.argv[1]
         image_path = sys.argv[2]
         batch_size = int(sys.argv[3])

@@ -137,7 +137,7 @@ class Darknet(nn.Module):
         self.height = int(self.blocks[0]['height'])
 
         # 基于blocks参数创建对应模型
-        self.models = self.create_network(self.blocks)  # merge conv, bn,leaky
+        self.models = self.create_network(self.blocks)  # merge conv, bn, leaky
         self.loss = self.models[len(self.models) - 1]
 
         if self.blocks[(len(self.blocks) - 1)]['type'] == 'region':
