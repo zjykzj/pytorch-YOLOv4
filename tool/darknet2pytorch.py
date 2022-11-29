@@ -17,6 +17,10 @@ class Mish(torch.nn.Module):
 
 
 class MaxPoolDark(nn.Module):
+    """
+    MaxPool集成版本，保证了该池化操作不会变化空间感受野大小
+    """
+
     def __init__(self, size=2, stride=1):
         super(MaxPoolDark, self).__init__()
         self.size = size
@@ -50,6 +54,10 @@ class MaxPoolDark(nn.Module):
 
 
 class Upsample_expand(nn.Module):
+    """
+    上采样操作，增加空间大小，不改变通道数
+    """
+
     def __init__(self, stride=2):
         super(Upsample_expand, self).__init__()
         self.stride = stride
@@ -133,6 +141,8 @@ class Darknet(nn.Module):
         # 通过配置文件生成对应blocks，默认使用`/path/to/cfg/yolov4.cfg`
         self.blocks = parse_cfg(cfgfile)
         # 获取输入数据的宽和高
+        # 这个应该是darknet指定。对于Pytorch定义模型而言，可以输入任意大小（理论上）
+        # blocks[0]是[net]块，该网络通用配置
         self.width = int(self.blocks[0]['width'])
         self.height = int(self.blocks[0]['height'])
 
@@ -242,19 +252,30 @@ class Darknet(nn.Module):
     def create_network(self, blocks):
         models = nn.ModuleList()
 
+        # 上一层滤波器个数，也就是上一层输出特征的通道数
         prev_filters = 3
+        # 记录每一层输出通道数
         out_filters = []
+        # 累积滤波器步长，作用母鸡，估计作用在特征连接或者相加的情况，保持空间大小一致
         prev_stride = 1
+        # 记录每一层计算后的累计滤波器步长
         out_strides = []
+        # 卷积编码，注意：这个conv_id包含了Conv-BN-Act
         conv_id = 0
         for block in blocks:
             if block['type'] == 'net':
+                # 块net保存了网络的通用属性，当前仅需使用输入数据的通道数
                 prev_filters = int(block['channels'])
                 continue
             elif block['type'] == 'convolutional':
+                # 块convolutional保存了Conv-BN-Act的属性
+                # 对于卷积层，需要设置滤波器个数，内核大小，步长以及是否填充
+                # 对于BN层，设置是否跟随
+                # 对于激活层，设置激活层类型
+                #
                 # 第几个卷积层
                 conv_id = conv_id + 1
-                # 是否跟随归一化层
+                # 是否跟随归一化层　0表示没有BN层，1表示增加BN层
                 batch_normalize = int(block['batch_normalize'])
                 # 滤波器数目
                 filters = int(block['filters'])
@@ -262,9 +283,15 @@ class Darknet(nn.Module):
                 kernel_size = int(block['size'])
                 # 滤波器步长
                 stride = int(block['stride'])
-                # 是否进行填充，如果是，表示空间感受野没有变化
+                # 是否进行填充，如果是，表示保持空间感受野大小
                 is_pad = int(block['pad'])
                 pad = (kernel_size - 1) // 2 if is_pad else 0
+                # 卷积层空间尺寸计算公式：
+                # H_out = (H_in + 2 * pad - dilate * (kernel - 1) -1) / stride + 1
+                # stride=1 is_pad=1 空间尺寸不变
+                # H_out = (H_in + 2 * (kernel - 1) // 2 - 1 * (kernel - 1) - 1) / 1 + 1 = (H_in - 1) / 1 + 1 = H_in
+                # stride=2 is_pad=1 空间尺寸减半
+                # H_out = (H_in + 2 * (kernel - 1) // 2 - 1 * (kernel - 1) - 1) / 2 + 1 = (H_in - 2) / 2 + 1 = H_in / 2
                 # 激活函数类型
                 activation = block['activation']
 
@@ -300,6 +327,8 @@ class Darknet(nn.Module):
                 out_strides.append(prev_stride)
                 models.append(model)
             elif block['type'] == 'maxpool':
+                # 块maxpool定义了池化层属性，指定池化大小以及步长
+                # maxpool通常作用于网络中间池话层
                 pool_size = int(block['size'])
                 stride = int(block['stride'])
                 if stride == 1 and pool_size % 2:
@@ -312,20 +341,33 @@ class Darknet(nn.Module):
                     model = nn.MaxPool2d(kernel_size=pool_size, stride=stride, padding=0)
                 else:
                     model = MaxPoolDark(pool_size, stride)
+                # 最大池化层空间尺寸计算公式：
+                # H_out = floor((H_in + 2 * pad - dilate * (pool - 1) -1) / stride + 1)
+                # pool = 5 stride = 1 padding = pool // 2 保持空间尺寸不变
+                # H_out = floor((H_in + 2 * (pool // 2) - 1 * (pool - 1) -1) / 1 + 1) = floor(H_in + 4 - 5 + 1) = H_in
+                # pool = 9 stride = 1 padding = pool // 2 保持空间尺寸不变
+                # H_out = floor((H_in + 2 * (pool // 2) - 1 * (pool - 1) -1) / 1 + 1) = floor(H_in + 8 - 9 + 1) = H_in
+                # pool = 13 stride = 1 padding = pool // 2 保持空间尺寸不变
+                # H_out = floor((H_in + 2 * (pool // 2) - 1 * (pool - 1) -1) / 1 + 1) = floor(H_in + 12 - 13 + 1) = H_in
+
                 out_filters.append(prev_filters)
                 prev_stride = stride * prev_stride
                 out_strides.append(prev_stride)
                 models.append(model)
             elif block['type'] == 'avgpool':
+                # 块avgpool定义了池化层属性，指定池化大小以及步长
+                # avgpool通常作用于最后一个池话层
                 model = GlobalAvgPool2d()
                 out_filters.append(prev_filters)
                 models.append(model)
             elif block['type'] == 'softmax':
+                # Softmax层，应该是作用于最后的分类输出
                 model = nn.Softmax()
                 out_strides.append(prev_stride)
                 out_filters.append(prev_filters)
                 models.append(model)
             elif block['type'] == 'cost':
+                # 成员函数，设计了三种：MSELoss / L1Loss / SmoothL1Loss
                 if block['_type'] == 'sse':
                     model = nn.MSELoss(reduction='mean')
                 elif block['_type'] == 'L1':
@@ -336,6 +378,7 @@ class Darknet(nn.Module):
                 out_strides.append(prev_stride)
                 models.append(model)
             elif block['type'] == 'reorg':
+                # 母鸡
                 stride = int(block['stride'])
                 prev_filters = stride * stride * prev_filters
                 out_filters.append(prev_filters)
@@ -343,19 +386,25 @@ class Darknet(nn.Module):
                 out_strides.append(prev_stride)
                 models.append(Reorg(stride))
             elif block['type'] == 'upsample':
+                # 上采样层，扩大图像空间面积
                 stride = int(block['stride'])
                 out_filters.append(prev_filters)
                 prev_stride = prev_stride // stride
                 out_strides.append(prev_stride)
+                # stride控制空间尺寸倍增数
+                # W_dst = W_src * stride
 
                 models.append(Upsample_expand(stride))
                 # models.append(Upsample_interpolate(stride))
 
             elif block['type'] == 'route':
+                # 路由层，作用母鸡
                 layers = block['layers'].split(',')
                 ind = len(models)
                 layers = [int(i) if int(i) > 0 else int(i) + ind for i in layers]
                 if len(layers) == 1:
+                    # 当前层连接一个层？
+                    # 有没有分组？
                     if 'groups' not in block.keys() or int(block['groups']) == 1:
                         prev_filters = out_filters[layers[0]]
                         prev_stride = out_strides[layers[0]]
@@ -378,13 +427,16 @@ class Darknet(nn.Module):
                 out_strides.append(prev_stride)
                 models.append(EmptyModule())
             elif block['type'] == 'shortcut':
+                # 一致性连接
                 ind = len(models)
+                # 加法操作，通道数保持不变
                 prev_filters = out_filters[ind - 1]
                 out_filters.append(prev_filters)
                 prev_stride = out_strides[ind - 1]
                 out_strides.append(prev_stride)
                 models.append(EmptyModule())
             elif block['type'] == 'sam':
+                # 作用母鸡
                 ind = len(models)
                 prev_filters = out_filters[ind - 1]
                 out_filters.append(prev_filters)
@@ -392,6 +444,7 @@ class Darknet(nn.Module):
                 out_strides.append(prev_stride)
                 models.append(EmptyModule())
             elif block['type'] == 'connected':
+                # 块connected表示激活函数
                 filters = int(block['output'])
                 if block['activation'] == 'linear':
                     model = nn.Linear(prev_filters, filters)
@@ -408,6 +461,7 @@ class Darknet(nn.Module):
                 out_strides.append(prev_stride)
                 models.append(model)
             elif block['type'] == 'region':
+                # 块region表示损失函数，具体作用以及用法还需要调研
                 loss = RegionLoss()
                 anchors = block['anchors'].split(',')
                 loss.anchors = [float(i) for i in anchors]
@@ -422,6 +476,7 @@ class Darknet(nn.Module):
                 out_strides.append(prev_stride)
                 models.append(loss)
             elif block['type'] == 'yolo':
+                # YOLO层，需要
                 yolo_layer = YoloLayer()
                 anchors = block['anchors'].split(',')
                 anchor_mask = block['mask'].split(',')

@@ -37,6 +37,10 @@ from tool.tv_reference.utils import collate_fn as val_collate
 from tool.tv_reference.coco_utils import convert_to_coco_api
 from tool.tv_reference.coco_eval import CocoEvaluator
 
+"""shell
+python train.py -g "0,1,2,3,4,5,6,7" -dir . -train_label_path ./data/train.txt
+"""
+
 
 def bboxes_iou(bboxes_a, bboxes_b, xyxy=True, GIoU=False, DIoU=False, CIoU=False):
     """Calculate the Intersection of Unions (IoUs) between bounding boxes.
@@ -128,6 +132,10 @@ def bboxes_iou(bboxes_a, bboxes_b, xyxy=True, GIoU=False, DIoU=False, CIoU=False
 
 
 class Yolo_loss(nn.Module):
+    """
+    YOLO网络损失
+    """
+
     def __init__(self, n_classes=80, n_anchors=3, device=None, batch=2):
         super(Yolo_loss, self).__init__()
         self.device = device
@@ -280,11 +288,16 @@ def collate(batch):
     images = []
     bboxes = []
     for img, box in batch:
+        # 每一次提取数据包含了图像以及对应bbox列表
+        # img: np.ndarray
         images.append([img])
+        # box: List[N_boxes, 5]
         bboxes.append([box])
+    # [N, H, W, C] -> [N, C, H, W] / 255.0
     images = np.concatenate(images, axis=0)
     images = images.transpose(0, 3, 1, 2)
     images = torch.from_numpy(images).div(255.0)
+    # [N, N_boxes, 5]
     bboxes = np.concatenate(bboxes, axis=0)
     bboxes = torch.from_numpy(bboxes)
     return images, bboxes
@@ -299,6 +312,7 @@ def train(model, device, config, epochs=5, batch_size=1, save_cp=True, log_step=
     n_train = len(train_dataset)
     n_val = len(val_dataset)
 
+    # 为什么要除以subdivisions，???
     train_loader = DataLoader(train_dataset, batch_size=config.batch // config.subdivisions, shuffle=True,
                               num_workers=8, pin_memory=True, drop_last=True, collate_fn=collate)
 
@@ -332,12 +346,18 @@ def train(model, device, config, epochs=5, batch_size=1, save_cp=True, log_step=
 
     # learning rate setup
     def burnin_schedule(i):
+        # 这里其实有个问题，它们按照的是iteration，而不是epoch进行学习率调整
+        # 但是下面代码中实际使用的epoch
+        # 前burn_in步，执行Linear Warmup
         if i < config.burn_in:
             factor = pow(i / config.burn_in, 4)
+        # 前steps[0]，保持学习率不变
         elif i < config.steps[0]:
             factor = 1.0
+        # [step[0], step[1]]，下降学习率0.1
         elif i < config.steps[1]:
             factor = 0.1
+        # step[1]之后，下降学习率0.01
         else:
             factor = 0.01
         return factor
@@ -345,6 +365,7 @@ def train(model, device, config, epochs=5, batch_size=1, save_cp=True, log_step=
     if config.TRAIN_OPTIMIZER.lower() == 'adam':
         optimizer = optim.Adam(
             model.parameters(),
+            # 最终学习率 = 初始学习率 / 批量大小
             lr=config.learning_rate / config.batch,
             betas=(0.9, 0.999),
             eps=1e-08,
@@ -631,7 +652,10 @@ if __name__ == "__main__":
     # 初始化日志模块
     logging = init_logger(log_dir='log')
     # Cfg是配置文件，有需要可以手动调整
+    # Cfg.cfgfile = os.path.join('cfg', 'yolov4_zj.cfg')
+    # Cfg.batch = 256
     cfg = get_args(**Cfg)
+    print(cfg)
     # 设置有效GPU
     os.environ["CUDA_VISIBLE_DEVICES"] = cfg.gpu
     # 判断是否使用GPU

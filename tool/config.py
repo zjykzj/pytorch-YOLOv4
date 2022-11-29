@@ -3,6 +3,12 @@ from tool.torch_utils import convert2cpu
 
 
 def parse_cfg(cfgfile):
+    """
+    解析配置文件
+    在配置文件中，每个block以[xxx]开头，然后每行以键值对表示块属性
+    解析过程中通过dict类型保存每个block属性，其中block名称保存为`type=xxx`
+    Returns: blocks，列表形式，每个子元素表示一个块，类型为字典
+    """
     blocks = []
     fp = open(cfgfile, 'r')
     block = None
@@ -16,7 +22,7 @@ def parse_cfg(cfgfile):
             continue
         elif line[0] == '[':
             if block:
-                # block不为空，加入blocks列表
+                # block不为空，表示此时的block包含了上一个块的配置，所以加入blocks列表，然后重新创建空白dict
                 blocks.append(block)
             # 创建新的block字典
             block = dict()
@@ -31,6 +37,7 @@ def parse_cfg(cfgfile):
             key, value = line.split('=')
             key = key.strip()
             if key == 'type':
+                # 块名用type作为key，所以键值对中的type转换成为_type
                 key = '_type'
             value = value.strip()
             block[key] = value
@@ -45,7 +52,7 @@ def parse_cfg(cfgfile):
 
 
 def print_cfg(blocks):
-    print('layer     filters    size              input                output');
+    print('layer     filters    size              input                output')
     prev_width = 416
     prev_height = 416
     prev_filters = 3
