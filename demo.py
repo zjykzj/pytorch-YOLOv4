@@ -39,7 +39,8 @@ def detect_cv2(cfgfile, weightfile, imgfile):
         height = 608
     else:
         # 创建Darknet模型
-        m = Darknet(cfgfile, inference=True)
+        # m = Darknet(cfgfile, inference=True)
+        m = Darknet(cfgfile, inference=False)
         width = m.width
         height = m.height
 

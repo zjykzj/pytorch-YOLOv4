@@ -346,8 +346,7 @@ def train(model, device, config, epochs=5, batch_size=1, save_cp=True, log_step=
 
     # learning rate setup
     def burnin_schedule(i):
-        # 这里其实有个问题，它们按照的是iteration，而不是epoch进行学习率调整
-        # 但是下面代码中实际使用的epoch
+        # 学习率按照iteration进行迭代，而不是按照epoch进行学习率调整
         # 前burn_in步，执行Linear Warmup
         if i < config.burn_in:
             factor = pow(i / config.burn_in, 4)

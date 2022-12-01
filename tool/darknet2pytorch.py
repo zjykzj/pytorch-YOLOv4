@@ -18,7 +18,12 @@ class Mish(torch.nn.Module):
 
 class MaxPoolDark(nn.Module):
     """
-    MaxPool集成版本，保证了该池化操作不会变化空间感受野大小
+    MaxPool2D + Pad操作，保持操作前后空间感受野大小不变
+    池化层空间尺寸计算公式：
+    H_out = (H_in + 2 * P - Dilate * (kernel - 1) -1) / S + 1
+    Pad计算公式：
+    H_out = H_in + Pad_top + Pad_bottom
+    W_out = W_in + Pad_left + Pad_right
     """
 
     def __init__(self, size=2, stride=1):
@@ -56,10 +61,13 @@ class MaxPoolDark(nn.Module):
 class Upsample_expand(nn.Module):
     """
     上采样操作，增加空间大小，不改变通道数
+    H_out = H_in * stride
+    W_out = W_in * stride
     """
 
     def __init__(self, stride=2):
         super(Upsample_expand, self).__init__()
+        # 步长控制扩充倍数
         self.stride = stride
 
     def forward(self, x):
@@ -73,8 +81,13 @@ class Upsample_expand(nn.Module):
 
 
 class Upsample_interpolate(nn.Module):
+    """
+    应用最近邻插值算法上采样图像
+    """
+
     def __init__(self, stride):
         super(Upsample_interpolate, self).__init__()
+        # 步长控制扩充倍数
         self.stride = stride
 
     def forward(self, x):
@@ -85,6 +98,10 @@ class Upsample_interpolate(nn.Module):
 
 
 class Reorg(nn.Module):
+    """
+    重新组织特征数据，减少空间尺寸，增加通道数。目的？？？
+    """
+
     def __init__(self, stride=2):
         super(Reorg, self).__init__()
         self.stride = stride
@@ -100,14 +117,22 @@ class Reorg(nn.Module):
         assert (W % stride == 0)
         ws = stride
         hs = stride
+        # [B, C, H, W] -> [B, C, H/S, S, W/S, S] -> [B, C, H/S, W/S, HS, WS]
         x = x.view(B, C, H / hs, hs, W / ws, ws).transpose(3, 4).contiguous()
+        # [B, C, H/S, W/S, HS, WS] -> [B, C, H/S * W/S, HS * WS] -> [B, C, HS * WS, H/S * W/S]
         x = x.view(B, C, H / hs * W / ws, hs * ws).transpose(2, 3).contiguous()
+        # [B, C, HS * WS, H/S * W/S] -> [B, C, HS * WS, H/S, W/S] -> [B, HS * WS, C, H/S, W/S]
         x = x.view(B, C, hs * ws, H / hs, W / ws).transpose(1, 2).contiguous()
+        # [B, HS * WS, C, H/S, W/S] -> [B, HS * WS * C, H/S, W/S]
         x = x.view(B, hs * ws * C, H / hs, W / ws)
         return x
 
 
 class GlobalAvgPool2d(nn.Module):
+    """
+    全局平均池化层
+    """
+
     def __init__(self):
         super(GlobalAvgPool2d, self).__init__()
 
@@ -116,13 +141,19 @@ class GlobalAvgPool2d(nn.Module):
         C = x.data.size(1)
         H = x.data.size(2)
         W = x.data.size(3)
+        # [N, C, H, W] -> [N, C, 1, 1]
         x = F.avg_pool2d(x, (H, W))
+        # [N, C, 1, 1] -> [N, C]
         x = x.view(N, C)
         return x
 
 
 # for route, shortcut and sam
 class EmptyModule(nn.Module):
+    """
+    空模块，运行过程中根据模块性质（路由／一致性连接以及sam）进行功能填充
+    """
+
     def __init__(self):
         super(EmptyModule, self).__init__()
 
@@ -156,22 +187,28 @@ class Darknet(nn.Module):
             self.anchor_step = self.loss.anchor_step
             self.num_classes = self.loss.num_classes
 
+        # 4位大小header ???
         self.header = torch.IntTensor([0, 0, 0, 0])
+        # seen ???
         self.seen = 0
 
     def forward(self, x):
+        # 去除第一个块[net]，后续block会参与计算，保存每个block的输出
         ind = -2
         self.loss = None
         outputs = dict()
         out_boxes = []
+        # 依据blocks进行计算
         for block in self.blocks:
             ind = ind + 1
             # if ind > 0:
             #    return x
 
             if block['type'] == 'net':
+                # 跳过[net]模块
                 continue
             elif block['type'] in ['convolutional', 'maxpool', 'reorg', 'upsample', 'avgpool', 'softmax', 'connected']:
+                # 卷积层、最大池化层、reorg?、上采样层、平均池化层、softmax层、connected?
                 x = self.models[ind](x)
                 outputs[ind] = x
             elif block['type'] == 'route':
@@ -179,6 +216,7 @@ class Darknet(nn.Module):
                 layers = [int(i) if int(i) > 0 else int(i) + ind for i in layers]
                 if len(layers) == 1:
                     if 'groups' not in block.keys() or int(block['groups']) == 1:
+                        # 没有分组
                         x = outputs[layers[0]]
                         outputs[ind] = x
                     else:
@@ -188,6 +226,7 @@ class Darknet(nn.Module):
                         x = outputs[layers[0]][:, b // groups * group_id:b // groups * (group_id + 1)]
                         outputs[ind] = x
                 elif len(layers) == 2:
+                    # 按通道维度连接多个特征数据
                     x1 = outputs[layers[0]]
                     x2 = outputs[layers[1]]
                     x = torch.cat((x1, x2), 1)
@@ -203,10 +242,15 @@ class Darknet(nn.Module):
                     print("rounte number > 2 ,is {}".format(len(layers)))
 
             elif block['type'] == 'shortcut':
+                # Identity Mapping 恒等映射
+                # 负数，从后往前数
                 from_layer = int(block['from'])
+                # 激活函数类型
                 activation = block['activation']
                 from_layer = from_layer if from_layer > 0 else from_layer + ind
+                # 启示层输出特征
                 x1 = outputs[from_layer]
+                # 上一层输出特征
                 x2 = outputs[ind - 1]
                 x = x1 + x2
                 if activation == 'leaky':
