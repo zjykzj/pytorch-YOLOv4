@@ -522,13 +522,18 @@ class Darknet(nn.Module):
             elif block['type'] == 'yolo':
                 # YOLO层，需要
                 yolo_layer = YoloLayer()
+                # 锚点？？？
                 anchors = block['anchors'].split(',')
+                # 锚点掩码？？？
                 anchor_mask = block['mask'].split(',')
+                # 赋值
                 yolo_layer.anchor_mask = [int(i) for i in anchor_mask]
                 yolo_layer.anchors = [float(i) for i in anchors]
                 yolo_layer.num_classes = int(block['classes'])
                 self.num_classes = yolo_layer.num_classes
+                # 锚点个数
                 yolo_layer.num_anchors = int(block['num'])
+                # 锚点步长?
                 yolo_layer.anchor_step = len(yolo_layer.anchors) // yolo_layer.num_anchors
                 yolo_layer.stride = prev_stride
                 yolo_layer.scale_x_y = float(block['scale_x_y'])
@@ -536,6 +541,7 @@ class Darknet(nn.Module):
                 # yolo_layer.noobject_scale = float(block['noobject_scale'])
                 # yolo_layer.class_scale = float(block['class_scale'])
                 # yolo_layer.coord_scale = float(block['coord_scale'])
+                # 这个是一个分支层，所以不改变上一层的结果
                 out_filters.append(prev_filters)
                 out_strides.append(prev_stride)
                 models.append(yolo_layer)

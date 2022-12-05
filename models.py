@@ -23,16 +23,19 @@ class Upsample(nn.Module):
         # _, _, tH, tW = target_size
 
         if inference:
+            # 在推理阶段，使用
 
-            #B = x.data.size(0)
-            #C = x.data.size(1)
-            #H = x.data.size(2)
-            #W = x.data.size(3)
+            # B = x.data.size(0)
+            # C = x.data.size(1)
+            # H = x.data.size(2)
+            # W = x.data.size(3)
 
-            return x.view(x.size(0), x.size(1), x.size(2), 1, x.size(3), 1).\
-                    expand(x.size(0), x.size(1), x.size(2), target_size[2] // x.size(2), x.size(3), target_size[3] // x.size(3)).\
-                    contiguous().view(x.size(0), x.size(1), target_size[2], target_size[3])
+            return x.view(x.size(0), x.size(1), x.size(2), 1, x.size(3), 1). \
+                expand(x.size(0), x.size(1), x.size(2), target_size[2] // x.size(2), x.size(3),
+                       target_size[3] // x.size(3)). \
+                contiguous().view(x.size(0), x.size(1), target_size[2], target_size[3])
         else:
+            # 在训练阶段，使用最近邻插值
             return F.interpolate(x, size=(target_size[2], target_size[3]), mode='nearest')
 
 
@@ -40,6 +43,8 @@ class Conv_Bn_Activation(nn.Module):
     def __init__(self, in_channels, out_channels, kernel_size, stride, activation, bn=True, bias=False):
         super().__init__()
         pad = (kernel_size - 1) // 2
+        # H_out = (H_in + 2 * Pad - Dilation * (Kernel -1) -1) / Stride + 1 = (H_in - 1) / Stride + 1
+        # 保持卷积操作前后特征图空间尺寸不变
 
         self.conv = nn.ModuleList()
         if bias:
@@ -68,6 +73,7 @@ class Conv_Bn_Activation(nn.Module):
 
 class ResBlock(nn.Module):
     """
+    是否执行残差连接，默认为True
     Sequential residual blocks each of which consists of \
     two convolution layers.
     Args:
@@ -118,21 +124,24 @@ class DownSample1(nn.Module):
         self.conv8 = Conv_Bn_Activation(128, 64, 1, 1, 'mish')
 
     def forward(self, input):
-        x1 = self.conv1(input)
-        x2 = self.conv2(x1)
-        x3 = self.conv3(x2)
+        # input: [1, 3, 608, 608]
+        x1 = self.conv1(input)  # [1, 32, 608, 608]
+        x2 = self.conv2(x1)  # [1, 64, 304, 304]
+        x3 = self.conv3(x2)  # [1, 64, 304, 304]
         # route -2
-        x4 = self.conv4(x2)
-        x5 = self.conv5(x4)
-        x6 = self.conv6(x5)
+        x4 = self.conv4(x2)  # [1, 64, 304, 304]
+        # x4: []
+        x5 = self.conv5(x4)  # [1, 32, 304, 304][=
+        x6 = self.conv6(x5)  # [1, 64, 304, 304]
         # shortcut -3
-        x6 = x6 + x4
+        x6 = x6 + x4  # [1, 64, 304, 304]
 
-        x7 = self.conv7(x6)
+        x7 = self.conv7(x6)  # [1, 64, 304, 304]
         # [route]
         # layers = -1, -7
-        x7 = torch.cat([x7, x3], dim=1)
-        x8 = self.conv8(x7)
+        # 路由层，相当于连接不同层的特征数据
+        x7 = torch.cat([x7, x3], dim=1)  # [1, 128, 304, 304]
+        x8 = self.conv8(x7)  # [1, 64, 304, 304]
         return x8
 
 
@@ -144,6 +153,7 @@ class DownSample2(nn.Module):
         # r -2
         self.conv3 = Conv_Bn_Activation(128, 64, 1, 1, 'mish')
 
+        # 输入输出通道数均为64，遍历两个ConvBNAct
         self.resblock = ResBlock(ch=64, nblocks=2)
 
         # s -3
@@ -159,6 +169,7 @@ class DownSample2(nn.Module):
         r = self.resblock(x3)
         x4 = self.conv4(r)
 
+        # 路由层
         x4 = torch.cat([x4, x2], dim=1)
         x5 = self.conv5(x4)
         return x5
@@ -239,12 +250,19 @@ class DownSample5(nn.Module):
 class Neck(nn.Module):
     def __init__(self, inference=False):
         super().__init__()
+        # 推理状态还是训练状态
         self.inference = inference
 
+        # 应用不同的ConvBNAct生成不一样的特征数据
         self.conv1 = Conv_Bn_Activation(1024, 512, 1, 1, 'leaky')
         self.conv2 = Conv_Bn_Activation(512, 1024, 3, 1, 'leaky')
         self.conv3 = Conv_Bn_Activation(1024, 512, 1, 1, 'leaky')
         # SPP
+        # SPP操作，采用三个不同大小的池话层得到
+        # H_out = (H_in + 2 * Pad - dilate * (Kernel - 1) - 1) / Stride + 1
+        # H_out = (H_in + 2 * (5 // 2) - 1 * (5 - 1) -1) / 1 + 1 = (H_in + 4 - 4 -1) / 1 + 1 = H_in
+        # H_out = (H_in + 2 * (9 // 2) - 1 * (9 - 1) -1) / 1 + 1 = (H_in + 8 - 8 - 1) / 1 + 1 = H_in
+        # H_out = (H_in + 2 * (13 // 2) - 1 * (13 - 1) - 1) / 1 + 1 =　(H_int + 12 - 12 -1) / 1 + 1 = H_in
         self.maxpool1 = nn.MaxPool2d(kernel_size=5, stride=1, padding=5 // 2)
         self.maxpool2 = nn.MaxPool2d(kernel_size=9, stride=1, padding=9 // 2)
         self.maxpool3 = nn.MaxPool2d(kernel_size=13, stride=1, padding=13 // 2)
@@ -278,45 +296,53 @@ class Neck(nn.Module):
         self.conv20 = Conv_Bn_Activation(256, 128, 1, 1, 'leaky')
 
     def forward(self, input, downsample4, downsample3, inference=False):
-        x1 = self.conv1(input)
-        x2 = self.conv2(x1)
-        x3 = self.conv3(x2)
+        # 首先执行SPP层
+        x1 = self.conv1(input)  # [1, 512, 19, 19]
+        x2 = self.conv2(x1)  # [1, 1024, 19, 19]
+        x3 = self.conv3(x2)  # [1, 512, 19, 19]
         # SPP
-        m1 = self.maxpool1(x3)
-        m2 = self.maxpool2(x3)
-        m3 = self.maxpool3(x3)
-        spp = torch.cat([m3, m2, m1, x3], dim=1)
+        m1 = self.maxpool1(x3)  # [1, 512, 19, 19]
+        m2 = self.maxpool2(x3)  # [1, 512, 19, 19]
+        m3 = self.maxpool3(x3)  # [1, 512, 19, 19]
+        spp = torch.cat([m3, m2, m1, x3], dim=1)  # [1, 2048, 19, 19]
         # SPP end
-        x4 = self.conv4(spp)
-        x5 = self.conv5(x4)
-        x6 = self.conv6(x5)
-        x7 = self.conv7(x6)
+        # SPP层得到的应该就是最后的卷积层特征向量
+        # 后面的就是FPN操作，执行多个卷积操作，然后上采样到上一层特征空间尺寸大小
+        # 连接对应特征数据后，再次执行多个卷积操作，然后上采样到上上一层特征空间大小
+        # 一共进行了两次上采样操作
+        x4 = self.conv4(spp)  # [1, 512, 19, 19]
+        x5 = self.conv5(x4)  # [1, 1024, 19, 19]
+        x6 = self.conv6(x5)  # [1, 512, 19, 19]
+        x7 = self.conv7(x6)  # [1, 256, 19, 19]
         # UP
-        up = self.upsample1(x7, downsample4.size(), self.inference)
+        # 得到最终的特征数据后，进行上采样，放大到downsample4大小
+        up = self.upsample1(x7, downsample4.size(), self.inference)  # [1, 256, 38, 38]
         # R 85
-        x8 = self.conv8(downsample4)
+        x8 = self.conv8(downsample4)  # [1, 256, 38, 38]
         # R -1 -3
-        x8 = torch.cat([x8, up], dim=1)
+        x8 = torch.cat([x8, up], dim=1)  # [1, 512, 38, 38]
 
-        x9 = self.conv9(x8)
-        x10 = self.conv10(x9)
-        x11 = self.conv11(x10)
-        x12 = self.conv12(x11)
-        x13 = self.conv13(x12)
-        x14 = self.conv14(x13)
+        x9 = self.conv9(x8)  # [1, 256, 38, 38]
+        x10 = self.conv10(x9)  # [1, 512, 38, 38]
+        x11 = self.conv11(x10)  # [1, 256, 38, 38]
+        x12 = self.conv12(x11)  # [1, 512, 38, 38]
+        x13 = self.conv13(x12)  # [1, 256, 38, 38]
+        x14 = self.conv14(x13)  # [1, 128, 38, 38]
 
         # UP
-        up = self.upsample2(x14, downsample3.size(), self.inference)
+        up = self.upsample2(x14, downsample3.size(), self.inference)  # [1, 128, 76, 76]
         # R 54
-        x15 = self.conv15(downsample3)
+        x15 = self.conv15(downsample3)  # [1, 128, 76, 76]
         # R -1 -3
-        x15 = torch.cat([x15, up], dim=1)
+        x15 = torch.cat([x15, up], dim=1)  # [1, 256, 76, 76]
 
-        x16 = self.conv16(x15)
-        x17 = self.conv17(x16)
-        x18 = self.conv18(x17)
-        x19 = self.conv19(x18)
-        x20 = self.conv20(x19)
+        x16 = self.conv16(x15)  # [1, 128, 76, 76]
+        x17 = self.conv17(x16)  # [1, 256, 76, 76]
+        x18 = self.conv18(x17)  # [1, 128, 76, 76]
+        x19 = self.conv19(x18)  # [1, 256, 76, 76]
+        x20 = self.conv20(x19)  # [1, 128, 76, 76]
+
+        # 最终输出三个特征数据，作用于不同大小的边界框预测
         return x20, x13, x6
 
 
@@ -329,9 +355,9 @@ class Yolov4Head(nn.Module):
         self.conv2 = Conv_Bn_Activation(256, output_ch, 1, 1, 'linear', bn=False, bias=True)
 
         self.yolo1 = YoloLayer(
-                                anchor_mask=[0, 1, 2], num_classes=n_classes,
-                                anchors=[12, 16, 19, 36, 40, 28, 36, 75, 76, 55, 72, 146, 142, 110, 192, 243, 459, 401],
-                                num_anchors=9, stride=8)
+            anchor_mask=[0, 1, 2], num_classes=n_classes,
+            anchors=[12, 16, 19, 36, 40, 28, 36, 75, 76, 55, 72, 146, 142, 110, 192, 243, 459, 401],
+            num_anchors=9, stride=8)
 
         # R -4
         self.conv3 = Conv_Bn_Activation(128, 256, 3, 2, 'leaky')
@@ -344,11 +370,11 @@ class Yolov4Head(nn.Module):
         self.conv8 = Conv_Bn_Activation(512, 256, 1, 1, 'leaky')
         self.conv9 = Conv_Bn_Activation(256, 512, 3, 1, 'leaky')
         self.conv10 = Conv_Bn_Activation(512, output_ch, 1, 1, 'linear', bn=False, bias=True)
-        
+
         self.yolo2 = YoloLayer(
-                                anchor_mask=[3, 4, 5], num_classes=n_classes,
-                                anchors=[12, 16, 19, 36, 40, 28, 36, 75, 76, 55, 72, 146, 142, 110, 192, 243, 459, 401],
-                                num_anchors=9, stride=16)
+            anchor_mask=[3, 4, 5], num_classes=n_classes,
+            anchors=[12, 16, 19, 36, 40, 28, 36, 75, 76, 55, 72, 146, 142, 110, 192, 243, 459, 401],
+            num_anchors=9, stride=16)
 
         # R -4
         self.conv11 = Conv_Bn_Activation(256, 512, 3, 2, 'leaky')
@@ -361,13 +387,20 @@ class Yolov4Head(nn.Module):
         self.conv16 = Conv_Bn_Activation(1024, 512, 1, 1, 'leaky')
         self.conv17 = Conv_Bn_Activation(512, 1024, 3, 1, 'leaky')
         self.conv18 = Conv_Bn_Activation(1024, output_ch, 1, 1, 'linear', bn=False, bias=True)
-        
+
         self.yolo3 = YoloLayer(
-                                anchor_mask=[6, 7, 8], num_classes=n_classes,
-                                anchors=[12, 16, 19, 36, 40, 28, 36, 75, 76, 55, 72, 146, 142, 110, 192, 243, 459, 401],
-                                num_anchors=9, stride=32)
+            anchor_mask=[6, 7, 8], num_classes=n_classes,
+            anchors=[12, 16, 19, 36, 40, 28, 36, 75, 76, 55, 72, 146, 142, 110, 192, 243, 459, 401],
+            num_anchors=9, stride=32)
 
     def forward(self, input1, input2, input3):
+        # Head层负责边界框预测
+        # input1: [1, 128, 76, 76]
+        # input2: [1, 256, 38, 38]
+        # input3: [1, 512, 19, 19]
+        # 按照论文描述的，使用PAN架构进行特征增强
+        # 从下到上进行特征投影，将加法操作设置为通道连接操作
+        # 然后使用YoloLayer执行边界框预测
         x1 = self.conv1(input1)
         x2 = self.conv2(x1)
 
@@ -394,14 +427,14 @@ class Yolov4Head(nn.Module):
         x16 = self.conv16(x15)
         x17 = self.conv17(x16)
         x18 = self.conv18(x17)
-        
+
         if self.inference:
             y1 = self.yolo1(x2)
             y2 = self.yolo2(x10)
             y3 = self.yolo3(x18)
 
             return get_region_boxes([y1, y2, y3])
-        
+
         else:
             return [x2, x10, x18]
 
@@ -410,6 +443,7 @@ class Yolov4(nn.Module):
     def __init__(self, yolov4conv137weight=None, n_classes=80, inference=False):
         super().__init__()
 
+        # 输出通道数：坐标（x/y/w/h）+ 坐标框置信度 + 类别数
         output_ch = (4 + 1 + n_classes) * 3
 
         # backbone
@@ -431,22 +465,35 @@ class Yolov4(nn.Module):
             # 2. overwrite entries in the existing state dict
             model_dict.update(pretrained_dict)
             _model.load_state_dict(model_dict)
-        
+
         # head
         self.head = Yolov4Head(output_ch, n_classes, inference)
 
         self.num_classes = n_classes
 
     def forward(self, input):
-        d1 = self.down1(input)
-        d2 = self.down2(d1)
-        d3 = self.down3(d2)
-        d4 = self.down4(d3)
-        d5 = self.down5(d4)
+        # input: [1, 3, 608, 608]
+        # 空间尺寸减半，通道数目倍增
+        d1 = self.down1(input)  # [1, 64, 304, 304]
+        d2 = self.down2(d1)  # [1, 128, 152, 152]
+        d3 = self.down3(d2)  # [1, 256, 76, 76]
+        d4 = self.down4(d3)  # [1, 512, 38, 38]
+        d5 = self.down5(d4)  # [1, 1024, 19, 19]
 
+        # Neck层负责特征融合
+        # d5: [1, 128, 19, 19]
+        # d4: [1, 512, 38, 38]
+        # d3: [1, 256, 76, 76]
         x20, x13, x6 = self.neck(d5, d4, d3)
+        # 获取三个特征图，通道数
+        # x20: [1, 128, 76, 76]
+        # x13: [1, 256, 38, 38]
+        # x6: [1, 512, 19, 19]
 
+        # Head层负责边界框预测
         output = self.head(x20, x13, x6)
+        # List[2]
+        # [1, 22743, 1, 4]
         return output
 
 
@@ -456,10 +503,15 @@ if __name__ == "__main__":
 
     namesfile = None
     if len(sys.argv) == 6:
+        # 类别数
         n_classes = int(sys.argv[1])
+        # 权重文件
         weightfile = sys.argv[2]
+        # 图像文件
         imgfile = sys.argv[3]
+        # 输入高
         height = int(sys.argv[4])
+        # 输入宽
         width = int(sys.argv[5])
     elif len(sys.argv) == 7:
         n_classes = int(sys.argv[1])
@@ -472,17 +524,22 @@ if __name__ == "__main__":
         print('Usage: ')
         print('  python models.py num_classes weightfile imgfile namefile')
 
+    # 创建Pytorch模型 - 作者自定义的YOLOv4
     model = Yolov4(yolov4conv137weight=None, n_classes=n_classes, inference=True)
 
-    pretrained_dict = torch.load(weightfile, map_location=torch.device('cuda'))
-    model.load_state_dict(pretrained_dict)
+    # pretrained_dict = torch.load(weightfile, map_location=torch.device('cuda'))
+    # pretrained_dict = {k.replace('neek.', 'neck.'): v for k, v in pretrained_dict.items()}  # strip the names
+    # model.load_state_dict(pretrained_dict)
 
+    # GPU推理
     use_cuda = True
     if use_cuda:
         model.cuda()
 
+    # 读取图片
     img = cv2.imread(imgfile)
 
+    # 图像预处理：图像缩放 + 颜色通道转换
     # Inference input size is 416*416 does not mean training size is the same
     # Training size could be 608*608 or even other sizes
     # Optional inference sizes:
@@ -494,10 +551,12 @@ if __name__ == "__main__":
     from tool.utils import load_class_names, plot_boxes_cv2
     from tool.torch_utils import do_detect
 
+    # 第一次检测作为warm up
     for i in range(2):  # This 'for' loop is for speed check
-                        # Because the first iteration is usually longer
+        # Because the first iteration is usually longer
         boxes = do_detect(model, sized, 0.4, 0.6, use_cuda)
 
+    # 指定类名文件
     if namesfile == None:
         if n_classes == 20:
             namesfile = 'data/voc.names'
@@ -506,5 +565,7 @@ if __name__ == "__main__":
         else:
             print("please give namefile")
 
+    # 加载类名列表
     class_names = load_class_names(namesfile)
+    # 绘制边界框
     plot_boxes_cv2(img, boxes[0], 'predictions.jpg', class_names)

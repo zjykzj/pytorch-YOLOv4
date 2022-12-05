@@ -310,11 +310,17 @@ class YoloLayer(nn.Module):
 
     def __init__(self, anchor_mask=[], num_classes=0, anchors=[], num_anchors=1, stride=32, model_out=False):
         super(YoloLayer, self).__init__()
+        # 锚点掩码
         self.anchor_mask = anchor_mask
+        # 类别数
         self.num_classes = num_classes
+        # 锚点列表
         self.anchors = anchors
+        # 锚点个数
         self.num_anchors = num_anchors
+        # 锚点步长，等同于锚点列表长度 // 锚点个数
         self.anchor_step = len(anchors) // num_anchors
+        # 坐标尺度
         self.coord_scale = 1
         self.noobject_scale = 1
         self.object_scale = 5
@@ -328,6 +334,7 @@ class YoloLayer(nn.Module):
 
     def forward(self, output, target=None):
         if self.training:
+            # 训练阶段直接输出，不执行目标框预测
             return output
         masked_anchors = []
         for m in self.anchor_mask:
