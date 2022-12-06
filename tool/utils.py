@@ -96,10 +96,16 @@ def nms_cpu(boxes, confs, nms_thresh=0.5, min_mode=False):
 
 def plot_boxes_cv2(img, boxes, savename=None, class_names=None, color=None):
     import cv2
+    # 复制原图
     img = np.copy(img)
+    # 指定颜色
     colors = np.array([[1, 0, 1], [0, 0, 1], [0, 1, 1], [0, 1, 0], [1, 1, 0], [1, 0, 0]], dtype=np.float32)
 
     def get_color(c, x, max_val):
+        """
+        c: 通道数
+        x:
+        """
         ratio = float(x) / max_val * 5
         i = int(math.floor(ratio))
         j = int(math.ceil(ratio))
@@ -107,42 +113,57 @@ def plot_boxes_cv2(img, boxes, savename=None, class_names=None, color=None):
         r = (1 - ratio) * colors[i][c] + ratio * colors[j][c]
         return int(r * 255)
 
+    # 图像宽/高
     width = img.shape[1]
     height = img.shape[0]
     for i in range(len(boxes)):
+        # 第i个边界框
         box = boxes[i]
+        # 左上角坐标以及右下角坐标
         x1 = int(box[0] * width)
         y1 = int(box[1] * height)
         x2 = int(box[2] * width)
         y2 = int(box[3] * height)
+        # 边框厚度
         bbox_thick = int(0.6 * (height + width) / 600)
         if color:
             rgb = color
         else:
+            # 默认使用红色
             rgb = (255, 0, 0)
         if len(box) >= 7 and class_names:
+            # 存在置信度以及类别ID，绘制
+            # 置信度
             cls_conf = box[5]
+            # 类别ID
             cls_id = box[6]
             print('%s: %f' % (class_names[cls_id], cls_conf))
             classes = len(class_names)
+            # 偏置，用于计算边框颜色
             offset = cls_id * 123457 % classes
             red = get_color(2, offset, classes)
             green = get_color(1, offset, classes)
             blue = get_color(0, offset, classes)
             if color is None:
                 rgb = (red, green, blue)
+            # 类名 + 置信度
             msg = str(class_names[cls_id]) + " " + str(round(cls_conf, 3))
+            # 计算文字大小(宽/高)
             t_size = cv2.getTextSize(msg, 0, 0.7, thickness=bbox_thick // 2)[0]
             c1, c2 = (x1, y1), (x2, y2)
             c3 = (c1[0] + t_size[0], c1[1] - t_size[1] - 3)
             # cv2.rectangle(img, (x1, y1), (np.float32(c3[0]), np.float32(c3[1])), rgb, -1)
+            # 绘制矩形
             cv2.rectangle(img, (x1, y1), (int(np.float32(c3[0])), int(np.float32(c3[1]))), rgb, -1)
             # img = cv2.putText(img, msg, (c1[0], np.float32(c1[1] - 2)), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 0),
+            # 绘制文字
             img = cv2.putText(img, msg, (c1[0], int(np.float32(c1[1] - 2))), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 0),
                               bbox_thick // 2, lineType=cv2.LINE_AA)
 
+        # 绘制预测边框
         img = cv2.rectangle(img, (x1, y1), (x2, y2), rgb, bbox_thick)
     if savename:
+        # 保存绘制图像
         print("save plot results to %s" % savename)
         cv2.imwrite(savename, img)
     return img
