@@ -371,6 +371,8 @@ class Yolov4Head(nn.Module):
         self.conv9 = Conv_Bn_Activation(256, 512, 3, 1, 'leaky')
         self.conv10 = Conv_Bn_Activation(512, output_ch, 1, 1, 'linear', bn=False, bias=True)
 
+        # 每个YOLO层使用3个锚点框，设置了不同的锚点长宽，另外设置了不同的stride（这个应该是对应不同的预测框大小）
+        # stride越大，说明压缩越厉害，那么放大的越大，适用于检测更大的目标框
         self.yolo2 = YoloLayer(
             anchor_mask=[3, 4, 5], num_classes=n_classes,
             anchors=[12, 16, 19, 36, 40, 28, 36, 75, 76, 55, 72, 146, 142, 110, 192, 243, 459, 401],
@@ -401,40 +403,43 @@ class Yolov4Head(nn.Module):
         # 按照论文描述的，使用PAN架构进行特征增强
         # 从下到上进行特征投影，将加法操作设置为通道连接操作
         # 然后使用YoloLayer执行边界框预测
-        x1 = self.conv1(input1) # [1, 256, 76, 76]
-        x2 = self.conv2(x1) # [1, 255, 76, 76]
+        x1 = self.conv1(input1)  # [1, 256, 76, 76]
+        x2 = self.conv2(x1)  # [1, 255, 76, 76]
 
-        x3 = self.conv3(input1) # [1, 256, 38, 38]
+        x3 = self.conv3(input1)  # [1, 256, 38, 38]
         # R -1 -16
-        x3 = torch.cat([x3, input2], dim=1) # [1, 512, 38, 38]
-        x4 = self.conv4(x3) # [1, 256, 38, 38]
-        x5 = self.conv5(x4) # [1, 512, 38, 38]
-        x6 = self.conv6(x5) # [1, 256, 38, 38]
-        x7 = self.conv7(x6) # [1, 512, 38, 38]
-        x8 = self.conv8(x7) # [1, 256, 38, 38]
-        x9 = self.conv9(x8) # [1, 512, 38, 38]
-        x10 = self.conv10(x9) # [1, 255, 38, 38]
+        x3 = torch.cat([x3, input2], dim=1)  # [1, 512, 38, 38]
+        x4 = self.conv4(x3)  # [1, 256, 38, 38]
+        x5 = self.conv5(x4)  # [1, 512, 38, 38]
+        x6 = self.conv6(x5)  # [1, 256, 38, 38]
+        x7 = self.conv7(x6)  # [1, 512, 38, 38]
+        x8 = self.conv8(x7)  # [1, 256, 38, 38]
+        x9 = self.conv9(x8)  # [1, 512, 38, 38]
+        x10 = self.conv10(x9)  # [1, 255, 38, 38]
 
         # R -4
-        x11 = self.conv11(x8) # [1, 512, 19, 19]
+        x11 = self.conv11(x8)  # [1, 512, 19, 19]
         # R -1 -37
-        x11 = torch.cat([x11, input3], dim=1) # [1, 1024, 19, 19]
+        x11 = torch.cat([x11, input3], dim=1)  # [1, 1024, 19, 19]
 
-        x12 = self.conv12(x11) # [1, 512, 19, 19]
-        x13 = self.conv13(x12) # [1, 1024, 19, 19]
-        x14 = self.conv14(x13) # [1, 512, 19, 19]
-        x15 = self.conv15(x14) # [1, 1024, 19, 19]
-        x16 = self.conv16(x15) # [1, 512, 19, 19]
-        x17 = self.conv17(x16) # [1, 1024, 19, 19]
-        x18 = self.conv18(x17) # [1, 255, 19, 19]
+        x12 = self.conv12(x11)  # [1, 512, 19, 19]
+        x13 = self.conv13(x12)  # [1, 1024, 19, 19]
+        x14 = self.conv14(x13)  # [1, 512, 19, 19]
+        x15 = self.conv15(x14)  # [1, 1024, 19, 19]
+        x16 = self.conv16(x15)  # [1, 512, 19, 19]
+        x17 = self.conv17(x16)  # [1, 1024, 19, 19]
+        x18 = self.conv18(x17)  # [1, 255, 19, 19]
 
         if self.inference:
             # x2: [1, 255, 76, 76]
-            y1 = self.yolo1(x2) # Tuple{2} [1, 17328, 1, 4]
+            y1 = self.yolo1(x2)
+            # x2: Tuple{2}
+            # Tuple[0]表示预测框　[1, 17328, 1, 4] == [Batch, num_anchors * F_H * F_W, 1, 4]
+            # Tuple[1]表示预测框对应的置信度 [1, 17328, num_classes]
             # x10: [1, 255, 38, 38]
-            y2 = self.yolo2(x10) # Tuple{2} [1, 4332, 1, 4]
+            y2 = self.yolo2(x10)  # Tuple{2} [1, 4332, 1, 4]
             # x18: [1, 255, 19, 19]
-            y3 = self.yolo3(x18) # Tuple{2} [1, 1083, 1, 4]
+            y3 = self.yolo3(x18)  # Tuple{2} [1, 1083, 1, 4]
 
             return get_region_boxes([y1, y2, y3])
 
@@ -495,8 +500,9 @@ class Yolov4(nn.Module):
 
         # Head层负责边界框预测
         output = self.head(x20, x13, x6)
-        # List[2]
-        # [1, 22743, 1, 4]
+        # List[2] = [boxes, confidences]
+        # boxes: [batch, num1 + num2 + num3, 1, 4]
+        # confs: [batch, num1 + num2 + num3, num_classes]
         return output
 
 

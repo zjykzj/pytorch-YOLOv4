@@ -169,7 +169,15 @@ def load_class_names(namesfile):
     return class_names
 
 
-def post_processing(img, conf_thresh, nms_thresh, output):
+def post_processing(
+        # 原始图像
+        img,
+        # 预测框置信度阈值
+        conf_thresh,
+        # NMS阈值
+        nms_thresh,
+        # 预测框以及置信度结果
+        output):
     # anchors = [12, 16, 19, 36, 40, 28, 36, 75, 76, 55, 72, 146, 142, 110, 192, 243, 459, 401]
     # num_anchors = 9
     # anchor_masks = [[0, 1, 2], [3, 4, 5], [6, 7, 8]]
@@ -184,6 +192,7 @@ def post_processing(img, conf_thresh, nms_thresh, output):
     t1 = time.time()
 
     if type(box_array).__name__ != 'ndarray':
+        # numpy操作
         box_array = box_array.cpu().detach().numpy()
         confs = confs.cpu().detach().numpy()
 
@@ -193,14 +202,16 @@ def post_processing(img, conf_thresh, nms_thresh, output):
     box_array = box_array[:, :, 0]
 
     # [batch, num, num_classes] --> [batch, num]
+    # 计算每个预测框最大的置信度以及对应类别ID
     max_conf = np.max(confs, axis=2)
     max_id = np.argmax(confs, axis=2)
 
     t2 = time.time()
 
     bboxes_batch = []
+    # 批量计算
     for i in range(box_array.shape[0]):
-
+        # 获取大于置信度阈值的预测框坐标、置信度以及对应类别ID
         argwhere = max_conf[i] > conf_thresh
         l_box_array = box_array[i, argwhere, :]
         l_max_conf = max_conf[i, argwhere]
@@ -208,6 +219,7 @@ def post_processing(img, conf_thresh, nms_thresh, output):
 
         bboxes = []
         # nms for each class
+        # 针对逐个类别的预测框执行NMS
         for j in range(num_classes):
 
             cls_argwhere = l_max_id == j
@@ -215,17 +227,19 @@ def post_processing(img, conf_thresh, nms_thresh, output):
             ll_max_conf = l_max_conf[cls_argwhere]
             ll_max_id = l_max_id[cls_argwhere]
 
-            keep = nms_cpu(ll_box_array, ll_max_conf, nms_thresh)
+            if len(ll_max_id) > 0:
+                keep = nms_cpu(ll_box_array, ll_max_conf, nms_thresh)
 
-            if (keep.size > 0):
-                ll_box_array = ll_box_array[keep, :]
-                ll_max_conf = ll_max_conf[keep]
-                ll_max_id = ll_max_id[keep]
+                if keep.size > 0:
+                    ll_box_array = ll_box_array[keep, :]
+                    ll_max_conf = ll_max_conf[keep]
+                    ll_max_id = ll_max_id[keep]
 
-                for k in range(ll_box_array.shape[0]):
-                    bboxes.append(
-                        [ll_box_array[k, 0], ll_box_array[k, 1], ll_box_array[k, 2], ll_box_array[k, 3], ll_max_conf[k],
-                         ll_max_conf[k], ll_max_id[k]])
+                    for k in range(ll_box_array.shape[0]):
+                        bboxes.append(
+                            [ll_box_array[k, 0], ll_box_array[k, 1], ll_box_array[k, 2], ll_box_array[k, 3],
+                             ll_max_conf[k],
+                             ll_max_conf[k], ll_max_id[k]])
 
         bboxes_batch.append(bboxes)
 

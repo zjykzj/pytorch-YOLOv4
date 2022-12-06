@@ -52,6 +52,7 @@ def get_region_boxes(boxes_and_confs):
     boxes_list = []
     confs_list = []
 
+    # 连接各个YOLO层计算得到的预测框和对应置信度
     for item in boxes_and_confs:
         boxes_list.append(item[0])
         confs_list.append(item[1])
