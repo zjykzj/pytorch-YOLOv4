@@ -527,7 +527,9 @@ class Yolo_dataset(Dataset):
         if use_mixup == 3:
             # 针对mosaic操作，保留子图像的bbox
             out_bboxes = np.concatenate(out_bboxes, axis=0)
+        # self.cfg.boxes默认为60，表示每幅图像单次最多采用60个真值框（目标类别+背景类别）参与训练
         out_bboxes1 = np.zeros([self.cfg.boxes, 5])
+        # 截取out_bboxes前min(out_bboxes.shape[0], self.cfg.boxes)作为真值框参与训练
         out_bboxes1[:min(out_bboxes.shape[0], self.cfg.boxes)] = out_bboxes[:min(out_bboxes.shape[0], self.cfg.boxes)]
         return out_img, out_bboxes1
 

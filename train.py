@@ -139,32 +139,54 @@ class Yolo_loss(nn.Module):
     def __init__(self, n_classes=80, n_anchors=3, device=None, batch=2):
         super(Yolo_loss, self).__init__()
         self.device = device
+        # 步长，图像宽高压缩比率，用于预测不同大小的预测框
+        # 步长越高，说明压缩的越高，那么预测框越大
+        # 步长越小，说明压缩的越小，那么预测框越小
         self.strides = [8, 16, 32]
+        # 默认图像大小设置为608
         image_size = 608
+        # 数据集类别数
         self.n_classes = n_classes
+        # 每个网格的锚点个数，默认为3个
         self.n_anchors = n_anchors
 
+        # 保存每个锚点框的宽/高，共设置了9个锚点框
         self.anchors = [[12, 16], [19, 36], [40, 28], [36, 75], [76, 55], [72, 146], [142, 110], [192, 243], [459, 401]]
+        # 将锚点掩码划分为3组，应用在不同的特征数据上
         self.anch_masks = [[0, 1, 2], [3, 4, 5], [6, 7, 8]]
+        # 置信度阈值设置为0.5
         self.ignore_thre = 0.5
 
         self.masked_anchors, self.ref_anchors, self.grid_x, self.grid_y, self.anchor_w, self.anchor_h = [], [], [], [], [], []
 
+        # 共使用3个特征图进行预测框计算
         for i in range(3):
             all_anchors_grid = [(w / self.strides[i], h / self.strides[i]) for w, h in self.anchors]
+            # 每个特征图使用不一样大小的锚点框，也就是说，不同特征图负责不同大小的预测框计算
+            # [3, 2] 3表示每个特征图上每个网格使用的锚点框数量 2表示锚点框的宽/高
             masked_anchors = np.array([all_anchors_grid[j] for j in self.anch_masks[i]], dtype=np.float32)
+            # [9, 4] 9表示锚点框总数，在各个特征图上应该会使用对应的锚点框 4表示预测框坐标 xywh 其中xy表示中心坐标
             ref_anchors = np.zeros((len(all_anchors_grid), 4), dtype=np.float32)
+            # 初始赋值
             ref_anchors[:, 2:] = np.array(all_anchors_grid, dtype=np.float32)
             ref_anchors = torch.from_numpy(ref_anchors)
             # calculate pred - xywh obj cls
+            # 特征图大小
             fsize = image_size // self.strides[i]
+            # 计算特征图上网格的左上角x0
+            # [fsize] -> [batch, 3, fsize, 1]
             grid_x = torch.arange(fsize, dtype=torch.float).repeat(batch, 3, fsize, 1).to(device)
+            # 计算特征图上网格的左上角y0
+            # [fsize] -> [batch, 3, fsize, 1] -> [batch, 3, 1, fsize]
             grid_y = torch.arange(fsize, dtype=torch.float).repeat(batch, 3, fsize, 1).permute(0, 1, 3, 2).to(device)
-            anchor_w = torch.from_numpy(masked_anchors[:, 0]).repeat(batch, fsize, fsize, 1).permute(0, 3, 1, 2).to(
-                device)
-            anchor_h = torch.from_numpy(masked_anchors[:, 1]).repeat(batch, fsize, fsize, 1).permute(0, 3, 1, 2).to(
-                device)
+            # 锚点宽　[3] -> [batch, fsize, fsize, 3] -> [batch, 3, fsize, fsize]
+            anchor_w = torch.from_numpy(masked_anchors[:, 0]) \
+                .repeat(batch, fsize, fsize, 1).permute(0, 3, 1, 2).to(device)
+            # 锚点高　[3] -> [batch, fsize, fsize, 3] -> [batch, 3, fsize, fsize]
+            anchor_h = torch.from_numpy(masked_anchors[:, 1]) \
+                .repeat(batch, fsize, fsize, 1).permute(0, 3, 1, 2).to(device)
 
+            # 保存每个特征图对应的锚点框以及初始坐标
             self.masked_anchors.append(masked_anchors)
             self.ref_anchors.append(ref_anchors)
             self.grid_x.append(grid_x)
@@ -172,34 +194,65 @@ class Yolo_loss(nn.Module):
             self.anchor_w.append(anchor_w)
             self.anchor_h.append(anchor_h)
 
-    def build_target(self, pred, labels, batchsize, fsize, n_ch, output_id):
+    def build_target(self,
+                     # 预测框　[B, n_anchors, F_H, F_W, xywh]
+                     pred,
+                     # 真值框 [B, N_Truths, 5]
+                     # [B, n_truths, xywh+cls_id]
+                     labels,
+                     # 批量大小
+                     batchsize,
+                     # 特征图大小
+                     fsize,
+                     # 4+1+self.n_classes
+                     n_ch,
+                     # 第几个特征图（或者说第几个YOLO层）计算的特征数据）
+                     output_id):
         # target assignment
+        # [B, 3, F_H, F_W, 4+num_classes]
         tgt_mask = torch.zeros(batchsize, self.n_anchors, fsize, fsize, 4 + self.n_classes).to(device=self.device)
+        # [B, 3, F_H, F_W]
         obj_mask = torch.ones(batchsize, self.n_anchors, fsize, fsize).to(device=self.device)
+        # [B, 3, F_H, F_W, 2]
         tgt_scale = torch.zeros(batchsize, self.n_anchors, fsize, fsize, 2).to(self.device)
+        # [B, 3, F_H, F_W, 5 + self.n_classes]
         target = torch.zeros(batchsize, self.n_anchors, fsize, fsize, n_ch).to(self.device)
 
         # labels = labels.cpu().data
+        # 并不是每幅图像都有足够数量的真值标签框
+        # 计算每幅图像的真值框个数
+        # [B, N_Truths, xywh+cls_id] -> [B, N_Truths] -> [B]
         nlabel = (labels.sum(dim=2) > 0).sum(dim=1)  # number of objects
 
+        # (w + x) / stride / 2
         truth_x_all = (labels[:, :, 2] + labels[:, :, 0]) / (self.strides[output_id] * 2)
+        # (h + y) / stride / 2
         truth_y_all = (labels[:, :, 3] + labels[:, :, 1]) / (self.strides[output_id] * 2)
+        # (w - x) / stride
         truth_w_all = (labels[:, :, 2] - labels[:, :, 0]) / self.strides[output_id]
+        # (h - y) / stride
         truth_h_all = (labels[:, :, 3] - labels[:, :, 1]) / self.strides[output_id]
         truth_i_all = truth_x_all.to(torch.int16).cpu().numpy()
         truth_j_all = truth_y_all.to(torch.int16).cpu().numpy()
 
+        # 批量计算
         for b in range(batchsize):
+            # 第b幅图像的真值框个数
             n = int(nlabel[b])
             if n == 0:
                 continue
+
+            # 创建真值框矩阵
             truth_box = torch.zeros(n, 4).to(self.device)
+            # 填充w / h
             truth_box[:n, 2] = truth_w_all[b, :n]
             truth_box[:n, 3] = truth_h_all[b, :n]
+            # 保存每个真值框对应的网格下标
             truth_i = truth_i_all[b, :n]
             truth_j = truth_j_all[b, :n]
 
             # calculate iou between truth and reference anchors
+            # 计算真值框和预测框之间的IoU，YOLOv4使用CIoU
             anchor_ious_all = bboxes_iou(truth_box.cpu(), self.ref_anchors[output_id], CIoU=True)
 
             # temp = bbox_iou(truth_box.cpu(), self.ref_anchors[output_id])
@@ -249,15 +302,26 @@ class Yolo_loss(nn.Module):
             fsize = output.shape[2]
             n_ch = 5 + self.n_classes
 
+            # [B, C, F_H, F_W] -> [B, 3, n_ch, F_H, F_W]
             output = output.view(batchsize, self.n_anchors, n_ch, fsize, fsize)
+            # [B, 3, n_ch, F_H, F_W] -> [B, 3, F_H, F_W, n_ch]
             output = output.permute(0, 1, 3, 4, 2)  # .contiguous()
 
             # logistic activation for xy, obj, cls
+            # 针对坐标xy以及、预测框置信度和分类概率进行逻辑激活
+            # sigmoid([B, 3, F_H, F_W, [:2]+[4:n_ch]])
             output[..., np.r_[:2, 4:n_ch]] = torch.sigmoid(output[..., np.r_[:2, 4:n_ch]])
 
+            # 预测框 [B, 3, F_H, F_W, 4]
+            # B表示图像批量大小
+            # 3表示每个网格拥有3个预测框
+            # F_H/F_W表示特征数据的高/宽
+            # 4表示xywh，预测框中心点坐标以及宽高
             pred = output[..., :4].clone()
+            # 对于中心点坐标，其计算方式为每个网格的左上角坐标 + pred[x,y]
             pred[..., 0] += self.grid_x[output_id]
             pred[..., 1] += self.grid_y[output_id]
+            # 对于预测框高宽，其计算方式为锚点宽高 * exp(w/h)
             pred[..., 2] = torch.exp(pred[..., 2]) * self.anchor_w[output_id]
             pred[..., 3] = torch.exp(pred[..., 3]) * self.anchor_h[output_id]
 
@@ -397,9 +461,12 @@ def train(model, device, config, epochs=5, batch_size=1, save_cp=True, log_step=
                 images = batch[0]
                 bboxes = batch[1]
 
+                # 原始图像：[N, C, H, W]
                 images = images.to(device=device, dtype=torch.float32)
+                # 真值边界框：[N, 4]
                 bboxes = bboxes.to(device=device)
 
+                # 预测边界框
                 bboxes_pred = model(images)
                 loss, loss_xy, loss_wh, loss_obj, loss_cls, loss_l2 = criterion(bboxes_pred, bboxes)
                 # loss = loss / config.subdivisions

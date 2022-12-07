@@ -278,6 +278,8 @@ class Darknet(nn.Module):
                 # else:
                 #     boxes = self.models[ind](x)
                 #     out_boxes.append(boxes)
+                # 在训练阶段，YOLO层不执行预测框计算，直接返回特征数据，在YOLO_Loss中计算
+                # boxes: [4, C, F_H, F_W]
                 boxes = self.models[ind](x)
                 out_boxes.append(boxes)
             elif block['type'] == 'cost':
@@ -286,8 +288,10 @@ class Darknet(nn.Module):
                 print('unknown type %s' % (block['type']))
 
         if self.training:
+            # 在训练阶段，返回不同YOLO层计算的预测框
             return out_boxes
         else:
+            # 在推理阶段，累加不同YOLO层的
             return get_region_boxes(out_boxes)
 
     def print_network(self):
