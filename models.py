@@ -296,6 +296,11 @@ class Neck(nn.Module):
         self.conv20 = Conv_Bn_Activation(256, 128, 1, 1, 'leaky')
 
     def forward(self, input, downsample4, downsample3, inference=False):
+        """
+        input: [1, 1024, 19, 19]
+        downsample4: [1, 512, 38, 38]
+        downsample3: [1, 256, 76, 76]
+        """
         # 首先执行SPP层
         x1 = self.conv1(input)  # [1, 512, 19, 19]
         x2 = self.conv2(x1)  # [1, 1024, 19, 19]
@@ -489,7 +494,7 @@ class Yolov4(nn.Module):
         d5 = self.down5(d4)  # [1, 1024, 19, 19]
 
         # Neck层负责特征融合
-        # d5: [1, 128, 19, 19]
+        # d5: [1, 1024, 19, 19]
         # d4: [1, 512, 38, 38]
         # d3: [1, 256, 76, 76]
         x20, x13, x6 = self.neck(d5, d4, d3)

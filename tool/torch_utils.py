@@ -10,7 +10,7 @@ import itertools
 import struct  # get_image_size
 import imghdr  # get_image_size
 
-from tool import utils 
+from tool import utils
 
 
 def bbox_ious(boxes1, boxes2, x1y1x2y2=True):
@@ -46,7 +46,6 @@ def bbox_ious(boxes1, boxes2, x1y1x2y2=True):
 
 
 def get_region_boxes(boxes_and_confs):
-
     # print('Getting boxes from boxes and confs ...')
 
     boxes_list = []
@@ -61,7 +60,7 @@ def get_region_boxes(boxes_and_confs):
     # confs: [batch, num1 + num2 + num3, num_classes]
     boxes = torch.cat(boxes_list, dim=1)
     confs = torch.cat(confs_list, dim=1)
-        
+
     return [boxes, confs]
 
 
@@ -71,7 +70,6 @@ def convert2cpu(gpu_matrix):
 
 def convert2cpu_long(gpu_matrix):
     return torch.LongTensor(gpu_matrix.size()).copy_(gpu_matrix)
-
 
 
 def do_detect(model, img, conf_thresh, nms_thresh, use_cuda=1):
@@ -105,4 +103,3 @@ def do_detect(model, img, conf_thresh, nms_thresh, use_cuda=1):
         print('-----------------------------------')
 
         return utils.post_processing(img, conf_thresh, nms_thresh, output)
-

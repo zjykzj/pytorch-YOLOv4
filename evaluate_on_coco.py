@@ -13,12 +13,13 @@ import logging
 import os
 import sys
 import time
-from collections import defaultdict
+import torch
 
 import numpy as np
-import torch
 from PIL import Image, ImageDraw
+from collections import defaultdict
 from easydict import EasyDict as edict
+
 from pycocotools.coco import COCO
 from pycocotools.cocoeval import COCOeval
 
@@ -29,6 +30,7 @@ from tool.torch_utils import do_detect
 
 
 def get_class_name(cat):
+    # 解析COCO类名
     class_names = load_class_names("./data/coco.names")
     if cat >= 1 and cat <= 11:
         cat = cat - 1
@@ -50,10 +52,13 @@ def get_class_name(cat):
         cat = cat - 11
     return class_names[cat]
 
+
 def convert_cat_id_and_reorientate_bbox(single_annotation):
     cat = single_annotation['category_id']
     bbox = single_annotation['bbox']
+    # x_center, y_center, w, h
     x, y, w, h = bbox
+    # 左上角坐标以及右下角坐标
     x1, y1, x2, y2 = x - w / 2, y - h / 2, x + w / 2, y + h / 2
     if 0 <= cat <= 10:
         cat = cat + 1
@@ -73,10 +78,10 @@ def convert_cat_id_and_reorientate_bbox(single_annotation):
         cat = cat + 10
     elif 73 <= cat <= 79:
         cat = cat + 11
+    # 类别ID + 标注框坐标
     single_annotation['category_id'] = cat
     single_annotation['bbox'] = [x1, y1, w, h]
     return single_annotation
-
 
 
 def myconverter(obj):
@@ -91,6 +96,7 @@ def myconverter(obj):
     else:
         return obj
 
+
 def evaluate_on_coco(cfg, resFile):
     annType = "bbox"  # specify type here
     with open(resFile, 'r') as f:
@@ -104,6 +110,7 @@ def evaluate_on_coco(cfg, resFile):
     with open('temp.json', 'w') as f:
         json.dump(sorted_annotations, f)
 
+    # 创建COCO类对象
     cocoGt = COCO(cfg.gt_annotations_path)
     cocoDt = cocoGt.loadRes('temp.json')
 
@@ -146,7 +153,7 @@ def evaluate_on_coco(cfg, resFile):
         else:
             print('please check')
             break
-        if (i + 1) % 100 == 0: # just see first 100
+        if (i + 1) % 100 == 0:  # just see first 100
             break
 
     imgIds = sorted(cocoGt.getImgIds())
@@ -170,11 +177,14 @@ def test(model, annotations, cfg):
     else:
         use_cuda = 0
 
+    # 先执行一次无效运算，避开冷启动
     # do one forward pass first to circumvent cold start
+    # 加载图像，转换到RGB格式，缩放到指定大小
     throwaway_image = Image.open('data/dog.jpg').convert('RGB').resize((model.width, model.height))
-    do_detect(model, throwaway_image, 0.5, 80, 0.4, use_cuda)
-    boxes_json = []
+    # do_detect(model, throwaway_image, 0.5, 80, 0.4, use_cuda)
+    do_detect(model, np.array(throwaway_image), 0.5, 0.4, use_cuda)
 
+    boxes_json = []
     for i, image_annotation in enumerate(images):
         logging.info("currently on image: {}/{}".format(i + 1, len(images)))
         image_file_name = image_annotation["file_name"]
@@ -185,12 +195,14 @@ def test(model, annotations, cfg):
         # open and resize each image first
         img = Image.open(os.path.join(cfg.dataset_dir, image_file_name)).convert('RGB')
         sized = img.resize((model.width, model.height))
+        sized = np.array(sized)
 
         if use_cuda:
             model.cuda()
 
         start = time.time()
-        boxes = do_detect(model, sized, 0.0, 80, 0.4, use_cuda)
+        # boxes = do_detect(model, sized, 0.0, 80, 0.4, use_cuda)
+        boxes = do_detect(model, sized, 0.0, 0.4, use_cuda)[0]
         finish = time.time()
         if type(boxes) == list:
             for box in boxes:
@@ -214,9 +226,9 @@ def test(model, annotations, cfg):
                 box_json["score"] = round(float(score), 2)
                 box_json["timing"] = float(finish - start)
                 boxes_json.append(box_json)
-                # print("see box_json: ", box_json)
-                with open(resFile, 'w') as outfile:
-                    json.dump(boxes_json, outfile, default=myconverter)
+                # # print("see box_json: ", box_json)
+                # with open(resFile, 'w') as outfile:
+                #     json.dump(boxes_json, outfile, default=myconverter)
         else:
             print("warning: output from model after postprocessing is not a list, ignoring")
             return

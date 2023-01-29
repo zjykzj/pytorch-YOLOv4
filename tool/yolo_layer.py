@@ -50,7 +50,6 @@ def yolo_forward(output, conf_thresh, num_classes, anchors, num_anchors, scale_x
     cls_confs = cls_confs.permute(0, 1, 3, 2).reshape(batch, num_anchors * H * W, num_classes)
 
     # Apply sigmoid(), exp() and softmax() to slices
-    #
     bxy = torch.sigmoid(bxy) * scale_x_y - 0.5 * (scale_x_y - 1)
     bwh = torch.exp(bwh)
     det_confs = torch.sigmoid(det_confs)
@@ -170,13 +169,16 @@ def yolo_forward_dynamic(output,
     # H = output.size(2)
     # W = output.size(3)
 
+    # x_center/y_center
     bxy_list = []
+    # w_box/h_box
     bwh_list = []
+    # 检测置信度
     det_confs_list = []
+    # 分类置信度
     cls_confs_list = []
 
-    # output: [Batch, F_C, F_H, F_W]
-    # 其中F_C = (4 + 1 + num_classes) * num_anchors
+    # 首先单独收集各自的数据（坐标／宽高／检测置信度／分类置信度）
     for i in range(num_anchors):
         # 假设有num_anchors个锚点，每个锚点占据(4+1+num_classes)个数据
         begin = i * (5 + num_classes)
@@ -195,6 +197,8 @@ def yolo_forward_dynamic(output,
         # cls_confs_list.append([Batch, num_classes, F_H, F_W])
         cls_confs_list.append(output[:, begin + 5: end])
 
+    # 转换成torch格式
+    #
     # len(bxy_list) == num_anchors
     # bxy_list[0].shape == [Batch, 2, F_H, F_W]
     # bxy.shape = [Batch, 2*num_anchors, F_H, F_W]
@@ -216,15 +220,20 @@ def yolo_forward_dynamic(output,
     cls_confs = cls_confs.permute(0, 1, 3, 2) \
         .reshape(output.size(0), num_anchors * output.size(2) * output.size(3), num_classes)
 
+    # 对于坐标而言，使用sigmoid进行归一化，同时按照尺度进行偏移
     # Apply sigmoid(), exp() and softmax() to slices
     #
-    # sigmoid(bxy)取值范围在[0, 1]之间
+    # sigmoid(bxy)取值范围在(0, 1)之间
+    # scale_x_y = 1
+    # bxy = torch.sigmoid(bxy)
     bxy = torch.sigmoid(bxy) * scale_x_y - 0.5 * (scale_x_y - 1)
+    # 针对宽高，使用指数进行缩放
     # bwh取值范围大于1（当bwh == 0时，exp(bwh) == 1）
     bwh = torch.exp(bwh)
-    # 边界框预测置信度在[0, 1]之间
+    # 同样的，对于检测置信度和分类置信度，仍旧使用sigmoid进行归一化
+    # 边界框预测置信度在(0, 1)之间
     det_confs = torch.sigmoid(det_confs)
-    # 分类概率预测在[0, 1]之间
+    # 分类概率预测在(0, 1)之间
     cls_confs = torch.sigmoid(cls_confs)
 
     # Prepare C-x, C-y, P-w, P-h (None of them are torch related)
@@ -235,12 +244,9 @@ def yolo_forward_dynamic(output,
     # [F_H, F_W]表示F_H行，每行向量大小为[F_W]
     grid_x = np.expand_dims(
         np.expand_dims(
-            np.expand_dims(
-                np.linspace(0, output.size(3) - 1, output.size(3)), axis=0
-            ).repeat(
-                output.size(2), 0
-            ), axis=0
-        ), axis=0)
+            np.expand_dims(np.linspace(0, output.size(3) - 1, output.size(3)), axis=0)
+                .repeat(output.size(2), 0), axis=0),
+        axis=0)
     # grid_y.shape =
     # [F_H] -> [F_H, 1] -> [F_H, F_W] -> [1, F_H, F_W] -> [1, 1, F_H, F_W]
     # [F_H] = [0, 1, 2, ..., (F_H - 1)]
@@ -310,11 +316,13 @@ def yolo_forward_dynamic(output,
     # Shape: [batch, 2 * num_anchors, H, W]
     by_bh = torch.cat((by, bh), dim=1)
 
+    # 基于特征图空间尺寸，将预测边界框宽高归一化
     # normalize coordinates to [0, 1]
     bx_bw /= output.size(3)
     by_bh /= output.size(2)
 
     # Shape: [batch, num_anchors * H * W, 1]
+    # 拉伸到相同形状大小
     bx = bx_bw[:, :num_anchors].view(output.size(0), num_anchors * output.size(2) * output.size(3), 1)
     by = by_bh[:, :num_anchors].view(output.size(0), num_anchors * output.size(2) * output.size(3), 1)
     bw = bx_bw[:, num_anchors:].view(output.size(0), num_anchors * output.size(2) * output.size(3), 1)
@@ -328,8 +336,8 @@ def yolo_forward_dynamic(output,
 
     # Shape: [batch, num_anchors * h * w, 4] -> [batch, num_anchors * h * w, 1, 4]
     # 共Batch幅图像，每幅图像有num_anchors * F_H * F_W个预测框
-    boxes = torch.cat((bx1, by1, bx2, by2), dim=2).view(output.size(0), num_anchors * output.size(2) * output.size(3),
-                                                        1, 4)
+    boxes = torch.cat((bx1, by1, bx2, by2), dim=2) \
+        .view(output.size(0), num_anchors * output.size(2) * output.size(3), 1, 4)
     # boxes = boxes.repeat(1, 1, num_classes, 1)
 
     # boxes:     [batch, num_anchors * H * W, 1, 4]
@@ -339,7 +347,7 @@ def yolo_forward_dynamic(output,
     # [batch, num_anchors * H * W] -> [batch, num_anchors * H * W, 1]
     det_confs = det_confs.view(output.size(0), num_anchors * output.size(2) * output.size(3), 1)
     # [batch, num_anchors * H * W, 1] * [batch, num_anchors * H * W, num_classes]
-    # 最终置信度计算？？？
+    # 最终置信度计算 = 检测置信度 * 分类置信度
     confs = cls_confs * det_confs
 
     # boxes: [batch, num_anchors * H * W, 1, 4]
@@ -351,6 +359,7 @@ def yolo_forward_dynamic(output,
 
 class YoloLayer(nn.Module):
     '''
+    YOLO层，应该和YOLOv3保持一致，关键在于实现是否有优化
     Yolo layer
 
     ＠model_out:
@@ -359,18 +368,27 @@ class YoloLayer(nn.Module):
     '''
 
     def __init__(self, anchor_mask=[], num_classes=0, anchors=[], num_anchors=1, stride=32, model_out=False):
+        """
+        Args:
+            anchor_mask: [0, 1, 2]
+            num_classes: n_classes
+            anchors: [12, 16, 19, 36, 40, 28, 36, 75, 76, 55, 72, 146, 142, 110, 192, 243, 459, 401]
+            num_anchors: 9
+            stride: 8
+            model_out:
+        """
         super(YoloLayer, self).__init__()
-        # 锚点掩码
+        # 锚点掩码，使用第几个锚点框
         self.anchor_mask = anchor_mask
-        # 类别数
+        # 数据集类别数
         self.num_classes = num_classes
-        # 锚点列表
+        # 全部锚点列表
         self.anchors = anchors
-        # 锚点个数
+        # 全部锚点个数
         self.num_anchors = num_anchors
-        # 锚点步长，等同于锚点列表长度 // 锚点个数
+        # 锚点步长，等同于锚点列表长度 // 锚点个数。没啥必要
         self.anchor_step = len(anchors) // num_anchors
-        # 坐标尺度
+        #
         self.coord_scale = 1
         self.noobject_scale = 1
         self.object_scale = 5
@@ -383,14 +401,21 @@ class YoloLayer(nn.Module):
         self.model_out = model_out
 
     def forward(self, output, target=None):
-        # output: 特征数据，大小为[Batch, F_C, F_H, F_W]
+        # output:
+        # 特征数据，大小为[Batch, OUTPUT_CHANNELS, F_H, F_W]
+        # 其中OUTPUT_CHANNELS = (4 + 1 + num_classes) * 3
+        # output等同于所有预测框的输出
         if self.training:
-            # 训练阶段直接输出，不执行目标框预测
+            # 训练阶段直接输出，不执行预测边界框的计算
             return output
+
         masked_anchors = []
         for m in self.anchor_mask:
+            # 获取该特征层使用的锚点框列表
             masked_anchors += self.anchors[m * self.anchor_step:(m + 1) * self.anchor_step]
+        # 缩放到指定倍数
         masked_anchors = [anchor / self.stride for anchor in masked_anchors]
 
+        # 动态YOLO层前向操作
         return yolo_forward_dynamic(output, self.thresh, self.num_classes, masked_anchors, len(self.anchor_mask),
                                     scale_x_y=self.scale_x_y)
