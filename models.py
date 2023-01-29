@@ -435,7 +435,9 @@ class Yolov4Head(nn.Module):
         x17 = self.conv17(x16)  # [1, 1024, 19, 19]
         x18 = self.conv18(x17)  # [1, 255, 19, 19]
 
+        # 训练阶段和推理阶段
         if self.inference:
+            # 推理阶段：整理所有的预测坐标和置信度并返回
             # x2: [1, 255, 76, 76]
             y1 = self.yolo1(x2)
             # x2: Tuple{2}
@@ -449,6 +451,7 @@ class Yolov4Head(nn.Module):
             return get_region_boxes([y1, y2, y3])
 
         else:
+            # 训练阶段，直接返回卷积层特征数据
             return [x2, x10, x18]
 
 
@@ -484,6 +487,21 @@ class Yolov4(nn.Module):
 
         self.num_classes = n_classes
 
+        self._init()
+
+    def _init(self):
+        for m in self.modules():
+            if isinstance(m, nn.Conv2d):
+                nn.init.kaiming_normal_(m.weight, mode="fan_out", nonlinearity="relu")
+                # nn.init.normal_(m.weight, 0, 0.01)
+                # nn.init.constant_(m.weight, 0.01)
+                if m.bias is not None:
+                    nn.init.constant_(m.bias, 0)
+            elif isinstance(m, nn.BatchNorm2d):
+                nn.init.normal_(m.weight, 0, 0.01)
+                # nn.init.constant_(m.weight, 0.01)
+                nn.init.constant_(m.bias, 0)
+
     def forward(self, input):
         # input: [1, 3, 608, 608]
         # 空间尺寸减半，通道数目倍增
@@ -509,6 +527,27 @@ class Yolov4(nn.Module):
         # boxes: [batch, num1 + num2 + num3, 1, 4]
         # confs: [batch, num1 + num2 + num3, num_classes]
         return output
+
+
+def init_seed(seed=None):
+    import random
+    import numpy as np
+
+    # seed必须是int，可以自行设置
+    seed = 1 if seed is None else seed
+    random.seed(seed)
+    np.random.seed(seed)  # numpy产生的随机数一致
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed(seed)  # 让显卡产生的随机数一致
+        torch.cuda.manual_seed_all(seed)  # 多卡模式下，让所有显卡生成的随机数一致？这个待验证
+        # CUDA中的一些运算，如对sparse的CUDA张量与dense的CUDA张量调用torch.bmm()，它通常使用不确定性算法。
+        # 为了避免这种情况，就要将这个flag设置为True，让它使用确定的实现。
+        torch.backends.cudnn.deterministic = True
+
+        # 设置这个flag可以让内置的cuDNN的auto-tuner自动寻找最适合当前配置的高效算法，来达到优化运行效率的问题。
+        # 但是由于噪声和不同的硬件条件，即使是同一台机器，benchmark都可能会选择不同的算法。为了消除这个随机性，设置为 False
+        torch.backends.cudnn.benchmark = False
 
 
 if __name__ == "__main__":
@@ -538,48 +577,59 @@ if __name__ == "__main__":
         print('Usage: ')
         print('  python models.py num_classes weightfile imgfile namefile')
 
+    init_seed()
+    img = torch.randn(1, 3, 640, 640)
+
     # 创建Pytorch模型 - 作者自定义的YOLOv4
     model = Yolov4(yolov4conv137weight=None, n_classes=n_classes, inference=True)
+    print(model)
+    model.eval()
 
     # pretrained_dict = torch.load(weightfile, map_location=torch.device('cuda'))
     # pretrained_dict = {k.replace('neek.', 'neck.'): v for k, v in pretrained_dict.items()}  # strip the names
     # model.load_state_dict(pretrained_dict)
 
-    # GPU推理
-    use_cuda = True
-    if use_cuda:
-        model.cuda()
+    # # GPU推理
+    # use_cuda = True
+    # if use_cuda:
+    #     model.cuda()
 
-    # 读取图片
-    img = cv2.imread(imgfile)
+    # # 读取图片
+    # img = cv2.imread(imgfile)
+    #
+    # # 图像预处理：图像缩放 + 颜色通道转换
+    # # Inference input size is 416*416 does not mean training size is the same
+    # # Training size could be 608*608 or even other sizes
+    # # Optional inference sizes:
+    # #   Hight in {320, 416, 512, 608, ... 320 + 96 * n}
+    # #   Width in {320, 416, 512, 608, ... 320 + 96 * m}
+    # sized = cv2.resize(img, (width, height))
+    # sized = cv2.cvtColor(sized, cv2.COLOR_BGR2RGB)
+    #
+    # from tool.utils import load_class_names, plot_boxes_cv2
+    # from tool.torch_utils import do_detect
 
-    # 图像预处理：图像缩放 + 颜色通道转换
-    # Inference input size is 416*416 does not mean training size is the same
-    # Training size could be 608*608 or even other sizes
-    # Optional inference sizes:
-    #   Hight in {320, 416, 512, 608, ... 320 + 96 * n}
-    #   Width in {320, 416, 512, 608, ... 320 + 96 * m}
-    sized = cv2.resize(img, (width, height))
-    sized = cv2.cvtColor(sized, cv2.COLOR_BGR2RGB)
+    # init_seed()
+    print(img.reshape(-1)[:20])
+    output = model(img)
+    print(output.reshape(-1)[:20])
 
-    from tool.utils import load_class_names, plot_boxes_cv2
-    from tool.torch_utils import do_detect
-
-    # 第一次检测作为warm up
-    for i in range(2):  # This 'for' loop is for speed check
-        # Because the first iteration is usually longer
-        boxes = do_detect(model, sized, 0.4, 0.6, use_cuda)
-
-    # 指定类名文件
-    if namesfile == None:
-        if n_classes == 20:
-            namesfile = 'data/voc.names'
-        elif n_classes == 80:
-            namesfile = 'data/coco.names'
-        else:
-            print("please give namefile")
-
-    # 加载类名列表
-    class_names = load_class_names(namesfile)
-    # 绘制边界框
-    plot_boxes_cv2(img, boxes[0], 'predictions.jpg', class_names)
+    # # # 第一次检测作为warm up
+    # # for i in range(2):  # This 'for' loop is for speed check
+    # #
+    # #     # Because the first iteration is usually longer
+    # #     boxes = do_detect(model, sized, 0.4, 0.6, use_cuda)
+    #
+    # # 指定类名文件
+    # if namesfile == None:
+    #     if n_classes == 20:
+    #         namesfile = 'data/voc.names'
+    #     elif n_classes == 80:
+    #         namesfile = 'data/coco.names'
+    #     else:
+    #         print("please give namefile")
+    #
+    # # 加载类名列表
+    # class_names = load_class_names(namesfile)
+    # # 绘制边界框
+    # plot_boxes_cv2(img, boxes[0], 'predictions.jpg', class_names)

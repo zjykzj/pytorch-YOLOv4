@@ -5,6 +5,21 @@ from tool.torch_utils import *
 
 def yolo_forward(output, conf_thresh, num_classes, anchors, num_anchors, scale_x_y, only_objectness=1,
                  validation=False):
+    """
+
+    Args:
+        output:
+        conf_thresh:
+        num_classes:
+        anchors:
+        num_anchors:
+        scale_x_y:
+        only_objectness:
+        validation:
+
+    Returns:
+
+    """
     # Output would be invalid if it does not satisfy this assert
     # assert (output.size(1) == (5 + num_classes) * num_anchors)
 
@@ -148,6 +163,7 @@ def yolo_forward(output, conf_thresh, num_classes, anchors, num_anchors, scale_x
     return boxes, confs
 
 
+# 动态？体现在哪里？
 def yolo_forward_dynamic(output,
                          conf_thresh,
                          num_classes,
@@ -156,6 +172,21 @@ def yolo_forward_dynamic(output,
                          scale_x_y,
                          only_objectness=1,
                          validation=False):
+    """
+    YOLOLayer计算
+    Args:
+        output: [B, (4 + 1 + n_classes) * 3, F_H, F_W]
+        conf_thresh:
+        num_classes:
+        anchors:
+        num_anchors:
+        scale_x_y:
+        only_objectness:
+        validation:
+
+    Returns:
+
+    """
     # Output would be invalid if it does not satisfy this assert
     assert (output.size(1) == (5 + num_classes) * num_anchors)
 
@@ -169,6 +200,7 @@ def yolo_forward_dynamic(output,
     # H = output.size(2)
     # W = output.size(3)
 
+    # 每个预测框结果包含了中心点坐标预测、边界框长宽预测、预测框置信度、分类置信度
     # x_center/y_center
     bxy_list = []
     # w_box/h_box
@@ -197,11 +229,11 @@ def yolo_forward_dynamic(output,
         # cls_confs_list.append([Batch, num_classes, F_H, F_W])
         cls_confs_list.append(output[:, begin + 5: end])
 
-    # 转换成torch格式
+    # 转换成torch格式，将相同空间位置的预测框数据连接在一起计算
     #
     # len(bxy_list) == num_anchors
     # bxy_list[0].shape == [Batch, 2, F_H, F_W]
-    # bxy.shape = [Batch, 2*num_anchors, F_H, F_W]
+    # bxy.shape = [Batch, 2　*　num_anchors, F_H, F_W]
     # Shape: [batch, num_anchors * 2, H, W]
     bxy = torch.cat(bxy_list, dim=1)
     # Shape: [batch, num_anchors * 2, H, W]
@@ -236,6 +268,12 @@ def yolo_forward_dynamic(output,
     # 分类概率预测在(0, 1)之间
     cls_confs = torch.sigmoid(cls_confs)
 
+    # 预测框的中心点坐标预测是基于网格左上角坐标，预测框的长宽坐标预测是基于锚点框的长宽
+    # 上面计算得到了预测框中心点坐标在对应网格中的比例，另外计算得到了预测框坐标相对于锚点框长宽的比例
+    # 下面就是
+    # 首先计算网格左上角坐标，以及每个预测框对应的锚点框长宽
+    # 然后计算对应预测结果
+    #
     # Prepare C-x, C-y, P-w, P-h (None of them are torch related)
     # 计算网格坐标
     # grid_x.shape =
@@ -260,7 +298,7 @@ def yolo_forward_dynamic(output,
     anchor_w = []
     anchor_h = []
     for i in range(num_anchors):
-        # 每个网格包含了num_anchors个锚点框
+        # 每个网格包含了num_anchors个锚点框，保存每个预测框的起始宽高（基于锚点框？？？）
         anchor_w.append(anchors[i * 2])
         anchor_h.append(anchors[i * 2 + 1])
 
@@ -280,17 +318,21 @@ def yolo_forward_dynamic(output,
         ii = i * 2
         # Shape: [batch, 1, H, W]
         # 网格中每个锚点框的预测x0，其值相对于网格坐标
+        # [B, 1, F_H, F_W] + [1, 1, F_H, F_W] = [B, 1, F_H, F_W]
         bx = bxy[:, ii: ii + 1] + torch.tensor(grid_x, device=device,
                                                dtype=torch.float32)  # grid_x.to(device=device, dtype=torch.float32)
         # Shape: [batch, 1, H, W]
         # 网格中每个锚点框的预测y0，其值相对于网格坐标
+        # [B, 1, F_H, F_W] + [1, 1, F_H, F_W] = [B, 1, F_H, F_W]
         by = bxy[:, ii + 1: ii + 2] + torch.tensor(grid_y, device=device,
                                                    dtype=torch.float32)  # grid_y.to(device=device, dtype=torch.float32)
         # Shape: [batch, 1, H, W]
         # 网格中每个锚点框的预测w，其值相对于锚点框宽度
+        # [B, 1, F_H, F_W] * anchor_w[i]
         bw = bwh[:, ii: ii + 1] * anchor_w[i]
         # Shape: [batch, 1, H, W]
         # 网格中每个锚点框的预测h，其值相对于锚点框高度
+        # [B, 1, F_H, F_W] * anchor_h[i]
         bh = bwh[:, ii + 1: ii + 2] * anchor_h[i]
 
         bx_list.append(bx)
@@ -298,6 +340,7 @@ def yolo_forward_dynamic(output,
         bw_list.append(bw)
         bh_list.append(bh)
 
+    # 在上面操作中，已经把预测框的结果计算完成了，接下来就是
     ########################################
     #   Figure out bboxes from slices     #
     ########################################
@@ -317,6 +360,9 @@ def yolo_forward_dynamic(output,
     by_bh = torch.cat((by, bh), dim=1)
 
     # 基于特征图空间尺寸，将预测边界框宽高归一化
+    # 当前计算得到的中心点坐标以及预测框长宽都是基于当前特征图大小的，为了后续进一步放大回原始大小，先转换成相对比例
+    # 对于b_x/b_w而言，计算与特征图宽的相对比例
+    # 对于b_y/b_h而言，计算与特征图高的相对比例
     # normalize coordinates to [0, 1]
     bx_bw /= output.size(3)
     by_bh /= output.size(2)
@@ -329,6 +375,7 @@ def yolo_forward_dynamic(output,
     bh = by_bh[:, num_anchors:].view(output.size(0), num_anchors * output.size(2) * output.size(3), 1)
 
     # 从这里可以看出，预测框的bx/by表示预测框的中心点
+    # 转换成COCO格式：[x1, y1, x2, y2]
     bx1 = bx - bw * 0.5
     by1 = by - bh * 0.5
     bx2 = bx1 + bw
@@ -354,6 +401,7 @@ def yolo_forward_dynamic(output,
     # confs: [batch, num_anchors * H * W, num_classes]
 
     # 返回预测边界框，以及对应置信度
+    # 边界狂和置信度预测，分开返回
     return boxes, confs
 
 
@@ -406,6 +454,7 @@ class YoloLayer(nn.Module):
         # 其中OUTPUT_CHANNELS = (4 + 1 + num_classes) * 3
         # output等同于所有预测框的输出
         if self.training:
+            # 训练阶段不执行YOLOLayer，那么在YOLOLoss中执行预测框和真值框/锚点框的损失计算
             # 训练阶段直接输出，不执行预测边界框的计算
             return output
 
@@ -417,5 +466,12 @@ class YoloLayer(nn.Module):
         masked_anchors = [anchor / self.stride for anchor in masked_anchors]
 
         # 动态YOLO层前向操作
+        #
+        # output: 预测结果，对应不同特征层输出　output_ch = (4 + 1 + n_classes) * 3
+        # thresh: 用于置信度过滤
+        # num_classes: 数据集类别数
+        # masked_anchors: 锚点框，已转换到YOLO格式并进行缩放
+        # num_anchors: 锚点框数目，一般为3个
+        # scale_x_y: 缩放？？？实际没有使用
         return yolo_forward_dynamic(output, self.thresh, self.num_classes, masked_anchors, len(self.anchor_mask),
                                     scale_x_y=self.scale_x_y)

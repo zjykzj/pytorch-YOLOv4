@@ -137,10 +137,18 @@ class Yolo_loss(nn.Module):
     """
 
     def __init__(self, n_classes=80, n_anchors=3, device=None, batch=2):
+        """
+        YOLO损失计算
+        Args:
+            n_classes: 数据集类别数
+            n_anchors: 锚点框个数
+            device:
+            batch: 批量大小
+        """
         super(Yolo_loss, self).__init__()
         self.device = device
         # 步长，图像宽高压缩比率，用于预测不同大小的预测框
-        # 步长越高，说明压缩的越高，那么预测框越大
+        # 步长越大，说明压缩的越大，那么预测框越大
         # 步长越小，说明压缩的越小，那么预测框越小
         self.strides = [8, 16, 32]
         # 默认图像大小设置为608
@@ -150,26 +158,33 @@ class Yolo_loss(nn.Module):
         # 每个网格的锚点个数，默认为3个
         self.n_anchors = n_anchors
 
+        # 在YOLO损失计算过程中，同时需要考虑锚点框、真值标签框和预测框，其中在损失函数和推理函数中均会计算锚点框和预测框
+        # 此处存在重复代码，后期可以进行优化
+        #
         # 保存每个锚点框的宽/高，共设置了9个锚点框
         self.anchors = [[12, 16], [19, 36], [40, 28], [36, 75], [76, 55], [72, 146], [142, 110], [192, 243], [459, 401]]
         # 将锚点掩码划分为3组，应用在不同的特征数据上
         self.anch_masks = [[0, 1, 2], [3, 4, 5], [6, 7, 8]]
         # 置信度阈值设置为0.5
+        # 在YOLOv4计算中，将预测框与真值标签框的IoU阈值设置为0.5（而不是YOLOv3中的0.7）
         self.ignore_thre = 0.5
 
         self.masked_anchors, self.ref_anchors, self.grid_x, self.grid_y, self.anchor_w, self.anchor_h = [], [], [], [], [], []
 
         # 共使用3个特征图进行预测框计算
         for i in range(3):
+            # 基于不同缩放比例计算不同特征数据上的锚点框坐标和长宽
             all_anchors_grid = [(w / self.strides[i], h / self.strides[i]) for w, h in self.anchors]
+            #
             # 每个特征图使用不一样大小的锚点框，也就是说，不同特征图负责不同大小的预测框计算
-            # [3, 2] 3表示每个特征图上每个网格使用的锚点框数量 2表示锚点框的宽/高
+            # 大小为[3, 2] 3表示每个特征图上每个网格使用的锚点框数量 2表示锚点框的宽/高
             masked_anchors = np.array([all_anchors_grid[j] for j in self.anch_masks[i]], dtype=np.float32)
-            # [9, 4] 9表示锚点框总数，在各个特征图上应该会使用对应的锚点框 4表示预测框坐标 xywh 其中xy表示中心坐标
+            # 大小为[9, 4] 9表示在各个特征图上使用的锚点框总数 4表示预测框坐标 x1y1x2y2 其中
+            # x1y1表示左上角坐标，x2y2表示右下角坐标，赋值为锚点框长宽
             ref_anchors = np.zeros((len(all_anchors_grid), 4), dtype=np.float32)
-            # 初始赋值
             ref_anchors[:, 2:] = np.array(all_anchors_grid, dtype=np.float32)
             ref_anchors = torch.from_numpy(ref_anchors)
+
             # calculate pred - xywh obj cls
             # 特征图大小
             fsize = image_size // self.strides[i]
@@ -186,9 +201,13 @@ class Yolo_loss(nn.Module):
             anchor_h = torch.from_numpy(masked_anchors[:, 1]) \
                 .repeat(batch, fsize, fsize, 1).permute(0, 3, 1, 2).to(device)
 
-            # 保存每个特征图对应的锚点框以及初始坐标
+            # 保存每个特征图对应的
+            # 锚点框
             self.masked_anchors.append(masked_anchors)
+            # ???这个估计是为了和真值标签框进行计算
             self.ref_anchors.append(ref_anchors)
+            # 每个网格的左上角坐标x/y以及对应的锚点框长宽
+            # 这也等同于x1y1x2y2设置
             self.grid_x.append(grid_x)
             self.grid_y.append(grid_y)
             self.anchor_w.append(anchor_w)
@@ -296,6 +315,15 @@ class Yolo_loss(nn.Module):
         return obj_mask, tgt_mask, tgt_scale, target
 
     def forward(self, xin, labels=None):
+        """
+
+        Args:
+            xin:
+            labels:
+
+        Returns:
+
+        """
         loss, loss_xy, loss_wh, loss_obj, loss_cls, loss_l2 = 0, 0, 0, 0, 0, 0
         for output_id, output in enumerate(xin):
             batchsize = output.shape[0]
@@ -443,7 +471,8 @@ def train(model, device, config, epochs=5, batch_size=1, save_cp=True, log_step=
     scheduler = optim.lr_scheduler.LambdaLR(optimizer, burnin_schedule)
 
     criterion = Yolo_loss(device=device, batch=config.batch // config.subdivisions, n_classes=config.classes)
-    # scheduler = ReduceLROnPlateau(optimizer, mode='max', verbose=True, patience=6, min_lr=1e-7)
+    # scheduler = ReduceLROnPlatea
+    # u(optimizer, mode='max', verbose=True, patience=6, min_lr=1e-7)
     # scheduler = CosineAnnealingWarmRestarts(optimizer, 0.001, 1e-6, 20)
 
     save_prefix = 'Yolov4_epoch'
