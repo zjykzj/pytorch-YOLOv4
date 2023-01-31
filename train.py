@@ -12,7 +12,9 @@
 '''
 import time
 import logging
-import os, sys, math
+import os
+import sys
+import math
 import argparse
 from collections import deque
 import datetime
@@ -318,18 +320,28 @@ class Yolo_loss(nn.Module):
         """
 
         Args:
-            xin:
-            labels:
+            xin:　[x2, x10, x18]
+                x2: [B, (4 + 1 + n_classes) * 3, H/8, W/8]
+                x10: [B, (4 + 1 + n_classes) * 3, H/16, W/16]
+                x18: [B, (4 + 1 + n_classes) * 3, H/32, W/32]
+            labels:　[num_bboxes, 5] 5表示xywh+cls_id
 
         Returns:
 
         """
+        # loss: 整体损失
+        # loss_xy: 坐标预测损失
+        # loss_wh: 长宽预测损失
+        # loss_obj: 目标置信度损失
+        # loss_cls: 分类置信度损失
+        # loss_l2: 并没有参与训练，作为展示使用
         loss, loss_xy, loss_wh, loss_obj, loss_cls, loss_l2 = 0, 0, 0, 0, 0, 0
         for output_id, output in enumerate(xin):
             batchsize = output.shape[0]
             fsize = output.shape[2]
             n_ch = 5 + self.n_classes
 
+            # 改变特征数据形状，符合后续计算
             # [B, C, F_H, F_W] -> [B, 3, n_ch, F_H, F_W]
             output = output.view(batchsize, self.n_anchors, n_ch, fsize, fsize)
             # [B, 3, n_ch, F_H, F_W] -> [B, 3, F_H, F_W, n_ch]
@@ -340,7 +352,7 @@ class Yolo_loss(nn.Module):
             # sigmoid([B, 3, F_H, F_W, [:2]+[4:n_ch]])
             output[..., np.r_[:2, 4:n_ch]] = torch.sigmoid(output[..., np.r_[:2, 4:n_ch]])
 
-            # 预测框 [B, 3, F_H, F_W, 4]
+            # 预测框pred [B, 3, F_H, F_W, 4]
             # B表示图像批量大小
             # 3表示每个网格拥有3个预测框
             # F_H/F_W表示特征数据的高/宽
@@ -353,6 +365,13 @@ class Yolo_loss(nn.Module):
             pred[..., 2] = torch.exp(pred[..., 2]) * self.anchor_w[output_id]
             pred[..., 3] = torch.exp(pred[..., 3]) * self.anchor_h[output_id]
 
+            # 掩码的目的在于屏蔽某些目标的损失计算
+            # obj_mask: 屏蔽目标置信度的损失计算
+            # tgt_mask: 屏蔽边界框坐标以及分类概率的损失计算
+            # tgt_scale: 尺度问题
+            #
+            # 通过结合labels（真值标签框）、锚点框和预测框坐标，得到符合条件的target参与损失计算
+            # 注意：output.shape == target.shape
             obj_mask, tgt_mask, tgt_scale, target = self.build_target(pred, labels, batchsize, fsize, n_ch, output_id)
 
             # loss calculation
@@ -364,11 +383,16 @@ class Yolo_loss(nn.Module):
             target[..., np.r_[0:4, 5:n_ch]] *= tgt_mask
             target[..., 2:4] *= tgt_scale
 
+            # 对于预测框中心点坐标，使用二元交叉熵损失
             loss_xy += F.binary_cross_entropy(input=output[..., :2], target=target[..., :2],
                                               weight=tgt_scale * tgt_scale, reduction='sum')
+            # 对于预测框长宽，使用均值平方损失
             loss_wh += F.mse_loss(input=output[..., 2:4], target=target[..., 2:4], reduction='sum') / 2
+            # 对于目标置信度，使用二元交叉熵损失
             loss_obj += F.binary_cross_entropy(input=output[..., 4], target=target[..., 4], reduction='sum')
+            # 对于分类置信度，使用二元交叉熵损失
             loss_cls += F.binary_cross_entropy(input=output[..., 5:], target=target[..., 5:], reduction='sum')
+            # 计算平均损失，用于日志记录
             loss_l2 += F.mse_loss(input=output, target=target, reduction='sum')
 
         loss = loss_xy + loss_wh + loss_obj + loss_cls
