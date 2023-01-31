@@ -48,6 +48,8 @@ def bboxes_iou(bboxes_a, bboxes_b, xyxy=True, GIoU=False, DIoU=False, CIoU=False
     """Calculate the Intersection of Unions (IoUs) between bounding boxes.
     IoU is calculated as a ratio of area of the intersection
     and area of the union.
+    计算两组边界框两两之间的交集并集比（IoU），输出数组Res大小为[N, K]，N表示bbox_a的长度，K表示bbox_b的长度
+    比如Res[3,5]表示bbox_a第3个边界框和bbox_b第5个边界框之间的IoU
 
     Args:
         bbox_a (array): An array whose shape is :math:`(N, 4)`.
@@ -69,11 +71,18 @@ def bboxes_iou(bboxes_a, bboxes_b, xyxy=True, GIoU=False, DIoU=False, CIoU=False
     if bboxes_a.shape[1] != 4 or bboxes_b.shape[1] != 4:
         raise IndexError
 
+    # 边界框数值格式，是按照[x_left_top, y_left_top, x_right_bottom, y_right_bottom]还是按照[x_center, y_center, w, h]
     if xyxy:
+        # 计算交集的左上角坐标
         # intersection top left
+        # bboxes_a[:, None, :2]，大小为[N, 1, 2]
+        # bboxes_b[:, :2]，大小为[K, 2]
+        # torch.max(...)，大小为[N, K, 2]
         tl = torch.max(bboxes_a[:, None, :2], bboxes_b[:, :2])
+        # 计算交集的右下角坐标
         # intersection bottom right
         br = torch.min(bboxes_a[:, None, 2:], bboxes_b[:, 2:])
+        # 计算并集的左上角和右下角坐标
         # convex (smallest enclosing box) top left and bottom right
         con_tl = torch.min(bboxes_a[:, None, :2], bboxes_b[:, :2])
         con_br = torch.max(bboxes_a[:, None, 2:], bboxes_b[:, 2:])
@@ -81,12 +90,18 @@ def bboxes_iou(bboxes_a, bboxes_b, xyxy=True, GIoU=False, DIoU=False, CIoU=False
         rho2 = ((bboxes_a[:, None, 0] + bboxes_a[:, None, 2]) - (bboxes_b[:, 0] + bboxes_b[:, 2])) ** 2 / 4 + (
                 (bboxes_a[:, None, 1] + bboxes_a[:, None, 3]) - (bboxes_b[:, 1] + bboxes_b[:, 3])) ** 2 / 4
 
+        # bboxes_a／高
         w1 = bboxes_a[:, 2] - bboxes_a[:, 0]
         h1 = bboxes_a[:, 3] - bboxes_a[:, 1]
+        # bboxes_b／高
         w2 = bboxes_b[:, 2] - bboxes_b[:, 0]
         h2 = bboxes_b[:, 3] - bboxes_b[:, 1]
 
+        # bboxes_a[:, 2:]表示边界框右下角的坐标 bboxes_a[:, :2]表示边界框左上角的坐标
+        # bboxes_a[:, 2:] - bboxes_a[:, :2]得到bboxes_a的宽和高，大小为[N, 2]
+        # torch.prod(...)：每行相乘，得到最后的每个边界框的面积，大小为[N]
         area_a = torch.prod(bboxes_a[:, 2:] - bboxes_a[:, :2], 1)
+        # 同理，大小为[K]
         area_b = torch.prod(bboxes_b[:, 2:] - bboxes_b[:, :2], 1)
     else:
         # intersection top left
@@ -111,11 +126,18 @@ def bboxes_iou(bboxes_a, bboxes_b, xyxy=True, GIoU=False, DIoU=False, CIoU=False
 
         area_a = torch.prod(bboxes_a[:, 2:], 1)
         area_b = torch.prod(bboxes_b[:, 2:], 1)
+    # 创建掩码：计算并集的左上角坐标小于右下角坐标的情况，也就是这两个边界框之间存在并集
+    # [N, K, 2] < [N, K, 2] -> [N, K, 2] -> [N, K]
     en = (tl < br).type(tl.type()).prod(dim=2)
+    # 计算并集面积 [N, K]
     area_i = torch.prod(br - tl, 2) * en  # * ((tl < br).all())
+    # 计算交集面积
+    # [N, 1] + [K] - [N, K] = [N, K]
     area_u = area_a[:, None] + area_b - area_i
+    # IoU = 交集并集比
     iou = area_i / area_u
 
+    # 针对IoU的优化，包括GIoU / DIoU / CIoU，后续再涉及
     if GIoU or DIoU or CIoU:
         if GIoU:  # Generalized IoU https://arxiv.org/pdf/1902.09630.pdf
             area_c = torch.prod(con_br - con_tl, 2)  # convex area
