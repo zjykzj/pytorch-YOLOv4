@@ -22,6 +22,9 @@ from torch.utils.data.dataset import Dataset
 
 
 def rand_uniform_strong(min, max):
+    """
+    随机均匀增强
+    """
     if min > max:
         swap = min
         min = max
@@ -30,6 +33,9 @@ def rand_uniform_strong(min, max):
 
 
 def rand_scale(s):
+    """
+    随机缩放，放大或者缩小
+    """
     scale = rand_uniform_strong(1, s)
     if random.randint(0, 1) % 2:
         return scale
@@ -37,6 +43,9 @@ def rand_scale(s):
 
 
 def rand_precalc_random(min, max, random_part):
+    """
+    也是随机操作，和rand_uniform_strong的差别在于初始值固定
+    """
     if max < min:
         swap = min
         min = max
@@ -66,6 +75,7 @@ def fill_truth_detection(bboxes, num_boxes, classes, flip, dx, dy, sx, sy, net_w
     Returns:
 
     """
+    # 如果真值边界框数目为0，那么返回
     if bboxes.shape[0] == 0:
         return bboxes, 10000
     # 随机打乱真值边界框
@@ -78,8 +88,8 @@ def fill_truth_detection(bboxes, num_boxes, classes, flip, dx, dy, sx, sy, net_w
 
     # 设置x0, x1的最大最小值
     # 精度截断
-    bboxes[:, 0] = np.clip(bboxes[:, 0], 0, sx)
     bboxes[:, 2] = np.clip(bboxes[:, 2], 0, sx)
+    bboxes[:, 0] = np.clip(bboxes[:, 0], 0, sx)
 
     # 设置y0，y1的最大最小值
     # 精度截断
@@ -352,8 +362,14 @@ def draw_box(img, bboxes):
 
 
 class Yolo_dataset(Dataset):
+    """
+    YOLO数据集类，集成了数据加载和数据转换工作
+    """
+
     def __init__(self, label_path, cfg, train=True):
         super(Yolo_dataset, self).__init__()
+
+        # mixup == 2 执行mosaic操作
         if cfg.mixup == 2:
             print("cutmix=1 - isn't supported for Detector")
             raise
@@ -364,6 +380,7 @@ class Yolo_dataset(Dataset):
         self.cfg = cfg
         self.train = train
 
+        # 按行读取标签文件，然后解析出图像路径以及图像对应的标注框和类别下标
         truth = {}
         f = open(label_path, 'r', encoding='utf-8')
         for line in f.readlines():
@@ -382,6 +399,7 @@ class Yolo_dataset(Dataset):
     def __getitem__(self, index):
         if not self.train:
             # 推理状态下，调用其他函数
+            # 推理状态下的预处理函数和训练阶段有差别
             return self._get_val_item(index)
         img_path = self.imgs[index]
         bboxes = np.array(self.truth.get(img_path), dtype=np.float)
@@ -408,6 +426,9 @@ class Yolo_dataset(Dataset):
         # 在输出图像上的真值边界框可以有多个
         out_bboxes = []
 
+        # 如果use_mixup==0，表示不进行mosaic操作
+        # 否则use_mixup==3，就是进行mosaic操作，从下面的实现中可以发现，每张图像都会进行预处理操作，包括
+        # 空间抖动、颜色抖动、随机翻转、随机模糊、随机噪声、随机缩放
         for i in range(use_mixup + 1):
             # print(f"{use_mixup} {i}")
             if i != 0:
@@ -461,11 +482,15 @@ class Yolo_dataset(Dataset):
                 gaussian_noise = 0
 
             if self.cfg.letter_box:
+                # 原始图像的宽高比
                 img_ar = ow / oh
+                # 结果图像的宽高比
                 net_ar = self.cfg.w / self.cfg.h
+                # 计算原始图像宽高比和结果图像宽高比的比例
                 result_ar = img_ar / net_ar
                 # print(" ow = %d, oh = %d, w = %d, h = %d, img_ar = %f, net_ar = %f, result_ar = %f \n", ow, oh, w, h, img_ar, net_ar, result_ar);
                 if result_ar > 1:  # sheight - should be increased
+                    # 这种情况下，原始图像的宽高比大于结果图像的宽高比
                     oh_tmp = ow / net_ar
                     delta_h = (oh_tmp - oh) / 2
                     ptop = ptop - delta_h
@@ -482,15 +507,19 @@ class Yolo_dataset(Dataset):
             swidth = ow - pleft - pright
             sheight = oh - ptop - pbot
 
+            # 关键操作一：fill_truth_detection 依据预处理操作设置边界框
             truth, min_w_h = fill_truth_detection(bboxes, self.cfg.boxes, self.cfg.classes, flip, pleft, ptop, swidth,
                                                   sheight, self.cfg.w, self.cfg.h)
             if (min_w_h / 8) < blur and blur > 1:  # disable blur if one of the objects is too small
                 # 调整模糊值
                 blur = min_w_h / 8
 
-            # 数据增强后的图像数据
+            # 关键操作二：image_data_augmentation 针对图像进行增强操作
             ai = image_data_augmentation(img, self.cfg.w, self.cfg.h, pleft, ptop, swidth, sheight, flip,
                                          dhue, dsat, dexp, gaussian_noise, blur, truth)
+
+            # 相当于标签框处理和图像数据处理分开处理
+            # 图像预处理大体可以划分为两部分，一个是空间操作，另一个是颜色操作。对于边界框而言，只有空间操作会影响。
 
             if use_mixup == 0:
                 # 不使用mixup，那么增强图像就是结果图像

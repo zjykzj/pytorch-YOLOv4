@@ -158,6 +158,10 @@ def bboxes_iou(bboxes_a, bboxes_b, xyxy=True, GIoU=False, DIoU=False, CIoU=False
 class Yolo_loss(nn.Module):
     """
     YOLO网络损失
+    关键点：
+    1. 锚点框、真值框和预测框之间的计算
+
+    在计算target的时候，首先是计算真值框和锚点框的IoU
     """
 
     def __init__(self, n_classes=80, n_anchors=3, device=None, batch=2):
@@ -251,15 +255,23 @@ class Yolo_loss(nn.Module):
                      n_ch,
                      # 第几个特征图（或者说第几个YOLO层）计算的特征数据）
                      output_id):
+        """
+        损失计算，需要的是预测结果和每个预测结果对应的真值标签
+        """
         # target assignment
         # [B, 3, F_H, F_W, 4+num_classes]
+        # 针对边界框坐标以及分类概率计算掩码
         tgt_mask = torch.zeros(batchsize, self.n_anchors, fsize, fsize, 4 + self.n_classes).to(device=self.device)
         # [B, 3, F_H, F_W]
+        # 针对置信度的掩码
         obj_mask = torch.ones(batchsize, self.n_anchors, fsize, fsize).to(device=self.device)
         # [B, 3, F_H, F_W, 2]
+        # 针对xy的缩放因子
         tgt_scale = torch.zeros(batchsize, self.n_anchors, fsize, fsize, 2).to(self.device)
         # [B, 3, F_H, F_W, 5 + self.n_classes]
+        # target，大小和预测一致
         target = torch.zeros(batchsize, self.n_anchors, fsize, fsize, n_ch).to(self.device)
+        # 从上面的定义中，可以发现有一些预测框是不会参与损失计算的
 
         # labels = labels.cpu().data
         # 并不是每幅图像都有足够数量的真值标签框
@@ -267,35 +279,43 @@ class Yolo_loss(nn.Module):
         # [B, N_Truths, xywh+cls_id] -> [B, N_Truths] -> [B]
         nlabel = (labels.sum(dim=2) > 0).sum(dim=1)  # number of objects
 
+        # 从这个定义中，应该是xyxy设置，然后转换成xywh格式，并且缩放到指定倍数
         # (w + x) / stride / 2
+        # (x1 + x2) / 2 = x_center
         truth_x_all = (labels[:, :, 2] + labels[:, :, 0]) / (self.strides[output_id] * 2)
         # (h + y) / stride / 2
+        # (y1 + y2) / 2 = y_center
         truth_y_all = (labels[:, :, 3] + labels[:, :, 1]) / (self.strides[output_id] * 2)
         # (w - x) / stride
+        # (x2 - x1) = w
         truth_w_all = (labels[:, :, 2] - labels[:, :, 0]) / self.strides[output_id]
         # (h - y) / stride
+        # (y2 - y1) = h
         truth_h_all = (labels[:, :, 3] - labels[:, :, 1]) / self.strides[output_id]
+        # 这个目的是计算网格
         truth_i_all = truth_x_all.to(torch.int16).cpu().numpy()
         truth_j_all = truth_y_all.to(torch.int16).cpu().numpy()
 
-        # 批量计算
+        # 单独计算每幅图像的真值标签
         for b in range(batchsize):
             # 第b幅图像的真值框个数
             n = int(nlabel[b])
             if n == 0:
+                # 如果该幅图像没有对应的真值框，那么跳过，也就是说target[...]=0
                 continue
 
-            # 创建真值框矩阵
+            # 创建真值框列表
             truth_box = torch.zeros(n, 4).to(self.device)
             # 填充w / h
             truth_box[:n, 2] = truth_w_all[b, :n]
             truth_box[:n, 3] = truth_h_all[b, :n]
-            # 保存每个真值框对应的网格下标
+            # 去除对应的网格下标，也就是说，真值框所在的网格位置
             truth_i = truth_i_all[b, :n]
             truth_j = truth_j_all[b, :n]
 
             # calculate iou between truth and reference anchors
             # 计算真值框和预测框之间的IoU，YOLOv4使用CIoU
+            #
             anchor_ious_all = bboxes_iou(truth_box.cpu(), self.ref_anchors[output_id], CIoU=True)
 
             # temp = bbox_iou(truth_box.cpu(), self.ref_anchors[output_id])
@@ -387,6 +407,10 @@ class Yolo_loss(nn.Module):
             pred[..., 2] = torch.exp(pred[..., 2]) * self.anchor_w[output_id]
             pred[..., 3] = torch.exp(pred[..., 3]) * self.anchor_h[output_id]
 
+            # 计算target以及掩码（某一些预测框不参与损失计算）
+            #
+            #
+            #
             # 掩码的目的在于屏蔽某些目标的损失计算
             # obj_mask: 屏蔽目标置信度的损失计算
             # tgt_mask: 屏蔽边界框坐标以及分类概率的损失计算

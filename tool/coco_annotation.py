@@ -33,14 +33,21 @@ with open(json_file_path, encoding='utf-8') as f:
     data = json.load(f)
 
 """generate labels"""
+# 获取图像列表，每个图像item包含了图像名、图像id以及宽/高等信息
 images = data['images']
+# 获取标注列表，每个标注item包含了类别下标、标注id以及标注框坐标列表等标注信息
 annotations = data['annotations']
+# 遍历每个标注item
 for ant in tqdm(annotations):
+    # 获取图像id
     id = ant['image_id']
     # name = os.path.join(images_dir_path, images[id]['file_name'])
+    # 生成对应图像路径
     name = os.path.join(images_dir_path, '{:012d}.jpg'.format(id))
+    # 获取类别下标
     cat = ant['category_id']
 
+    # 类别下标转换，这一段应该是默认的操作
     if cat >= 1 and cat <= 11:
         cat = cat - 1
     elif cat >= 13 and cat <= 25:
@@ -60,12 +67,16 @@ for ant in tqdm(annotations):
     elif cat >= 84 and cat <= 90:
         cat = cat - 11
 
+    # 载入字典，图像路径: [真值边界框列表，类别id]
     name_box_id[name].append([ant['bbox'], cat])
 
 """write to txt"""
+# 将图像路径以及标注信息按行写入txt文件
 with open(output_path, 'w') as f:
     for key in tqdm(name_box_id.keys()):
+        # 首先写入图像路径
         f.write(key)
+        # 然后获取标注信息
         box_infos = name_box_id[key]
         for info in box_infos:
             x_min = int(info[0][0])
